@@ -1,0 +1,13 @@
+services:
+  omnilingua:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/pranavnbapat/omnilingua:latest
+    container_name: omnilingua
+    ports:
+      - "9000:9000"
+    env_file:
+      - .env
+    restart: always
+
