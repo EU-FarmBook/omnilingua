@@ -16,7 +16,12 @@ work/
 temp/
 tmp/
 output/
-input/
+input/*
+
+!input/biorefine_ammonia_stripping_and_scrubbing_ugent_wp3_a9.pdf
+!input/FCUBED_project_leaflet.pdf
+!input/Two-years-of-CHEERS_EN.pdf
+!input/valorisation_of_agricultural_wastewater_streams_by_producing_duckweed.pdf
 
 # =============================================================================
 # Python
