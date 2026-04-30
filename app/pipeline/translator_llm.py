@@ -15,6 +15,8 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from dotenv import load_dotenv
 from openai import OpenAI, APIConnectionError, APIError
 
+from app.core.model_config import get_text_model_config
+
 # Load environment variables
 load_dotenv()
 
@@ -98,10 +100,10 @@ class LLMTranslator:
     """OpenAI-compatible LLM translator for document translation."""
     
     def __init__(self):
-        # Support both naming conventions for flexibility
-        self.api_url = os.getenv("RUNPOD_VLLM_HOST") or os.getenv("LLM_API_URL", "http://localhost:8000/v1")
-        self.api_key = os.getenv("VLLM_API_KEY") or os.getenv("LLM_API_KEY", "")
-        self.model = os.getenv("VLLM_MODEL") or os.getenv("LLM_MODEL", "qwen3-30b-a3b-awq")
+        config = get_text_model_config()
+        self.api_url = config.api_url
+        self.api_key = config.api_key
+        self.model = config.model
         # Use larger max_tokens for translation
         combine_max = os.getenv("COMBINE_NUM_PREDICT")
         default_max = combine_max if combine_max else "8192"
@@ -111,11 +113,7 @@ class LLMTranslator:
         self.temperature = float(os.getenv("LLM_TEMPERATURE", "0.1"))
         self.batch_size = int(os.getenv("LLM_BATCH_SIZE", "50"))  # More nodes per batch
         self.timeout = int(os.getenv("PER_REQUEST_TIMEOUT", "600"))
-        
-        # Ensure API URL has /v1 suffix
-        if self.api_url and not self.api_url.rstrip("/").endswith("/v1"):
-            self.api_url = self.api_url.rstrip("/") + "/v1"
-        
+
         print(f"Connecting to LLM API: {self.api_url}")
         print(f"Using model: {self.model}")
         

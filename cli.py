@@ -5,12 +5,21 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from app.core.languages import validate_optional_language_code
 from app.pipeline.convert_pdf_to_html import convert_pdf_to_html
+from app.pipeline.playwright_support import ensure_chromium_installed
 from app.pipeline.replace_html_text import load_mapping, replace_text_nodes
 from app.pipeline.render_html_to_pdf import render_html_to_pdf
 from app.pipeline.pdf_page_size import get_first_page_size
 from app.pipeline.translator_llm import translate_html_content
 from app.pipeline.translate_pdf_direct import translate_pdf_direct
+
+
+def normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
 
 
 def resolve_pdf_out_path(
@@ -69,6 +78,11 @@ def main() -> int:
     ap.add_argument("--save-html", action="store_true",
                     help="Also save intermediate HTML files to the output directory.")
     ap.add_argument(
+        "--translate-image-text",
+        action="store_true",
+        help="Experimental: translate text embedded inside images when using the direct engine.",
+    )
+    ap.add_argument(
         "--layout-engine",
         choices=("html", "direct"),
         default="html",
@@ -78,6 +92,18 @@ def main() -> int:
 
     pdf_in = Path(args.pdf_in).expanduser().resolve()
     workdir = Path(args.workdir).expanduser().resolve()
+    args.target_lang = normalize_optional_text(args.target_lang)
+    args.source_lang = normalize_optional_text(args.source_lang)
+    args.mapping_json = normalize_optional_text(args.mapping_json)
+
+    try:
+        args.target_lang = validate_optional_language_code(args.target_lang, "target_lang")
+        args.source_lang = validate_optional_language_code(args.source_lang, "source_lang")
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    if args.target_lang and args.source_lang and args.target_lang == args.source_lang:
+        raise ValueError("--source-lang and --target-lang must be different when both are provided.")
+
     pdf_out = resolve_pdf_out_path(
         args.pdf_out,
         pdf_in=pdf_in,
@@ -98,6 +124,7 @@ def main() -> int:
             pdf_out=pdf_out,
             target_lang=args.target_lang,
             source_lang=args.source_lang,
+            translate_image_text=args.translate_image_text,
         )
         print(f"Source language: {stats.source_lang}")
         print(
@@ -105,8 +132,17 @@ def main() -> int:
             f"(skipped: {stats.blocks_skipped}, retried: {stats.blocks_retried}, rejected: {stats.blocks_rejected})"
         )
         print(f"API calls made:  {stats.api_calls}")
+        if args.translate_image_text:
+            print(
+                "Image text translated: "
+                f"{stats.image_blocks_translated} blocks "
+                f"(regions: {stats.image_regions_processed}, rejected: {stats.image_blocks_rejected}, "
+                f"API calls: {stats.image_api_calls})"
+            )
         print(f"PDF output:      {pdf_out}")
         return 0
+
+    ensure_chromium_installed()
 
     page_size = get_first_page_size(pdf_in)
 
@@ -124,6 +160,8 @@ def main() -> int:
     # Check for conflicting options
     if args.mapping_json and args.target_lang:
         raise ValueError("Cannot use both --mapping-json and --target-lang. Choose one translation method.")
+    if not args.mapping_json and not args.target_lang:
+        raise ValueError("--target-lang is required unless --mapping-json is provided.")
 
     if args.target_lang:
         # LLM-based translation

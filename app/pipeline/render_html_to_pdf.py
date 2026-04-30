@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from pathlib import Path
 from typing import Any
@@ -244,14 +245,34 @@ def render_html_to_pdf(
     hide_background_images: bool = False,
 ) -> None:
     """
-    Synchronous wrapper.
+    Synchronous wrapper that works both from plain CLI code and from
+    request handlers already running inside an event loop.
     """
-    asyncio.run(
-        _render_with_chromium(
-            html_path,
-            pdf_path,
-            page_size,
-            adjust_text_overflow=adjust_text_overflow,
-            hide_background_images=hide_background_images,
-        )
+    coro = _render_with_chromium(
+        html_path,
+        pdf_path,
+        page_size,
+        adjust_text_overflow=adjust_text_overflow,
+        hide_background_images=hide_background_images,
     )
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(coro)
+        return
+
+    result: dict[str, BaseException | None] = {"error": None}
+
+    def runner() -> None:
+        try:
+            asyncio.run(coro)
+        except BaseException as exc:  # propagate original rendering failures
+            result["error"] = exc
+
+    thread = threading.Thread(target=runner, name="render-html-to-pdf", daemon=False)
+    thread.start()
+    thread.join()
+
+    if result["error"] is not None:
+        raise result["error"]

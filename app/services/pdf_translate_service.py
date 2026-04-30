@@ -9,8 +9,10 @@ from typing import Literal, Optional
 
 from fastapi import HTTPException, UploadFile
 
+from app.core.languages import validate_optional_language_code
 from app.pipeline.convert_pdf_to_html import convert_pdf_to_html
 from app.pipeline.pdf_page_size import get_first_page_size
+from app.pipeline.playwright_support import ensure_chromium_installed_async
 from app.pipeline.render_html_to_pdf import render_html_to_pdf
 from app.pipeline.replace_html_text import replace_text_nodes
 from app.pipeline.translate_pdf_direct import translate_pdf_direct
@@ -36,18 +38,47 @@ def safe_stem(name: str) -> str:
     return safe[:120] or "document"
 
 
+def normalize_optional_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
 def validate_request(
     filename: str | None,
     target_lang: Optional[str],
+    source_lang: Optional[str],
     layout_engine: LayoutEngine,
     mapping_json: Optional[str],
-) -> None:
+) -> tuple[Optional[str], Optional[str]]:
+    target_lang = normalize_optional_text(target_lang)
+    source_lang = normalize_optional_text(source_lang)
+    mapping_json = normalize_optional_text(mapping_json)
+
     if not filename or not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Uploaded file must be a .pdf")
-    if layout_engine == "direct" and not target_lang:
-        raise HTTPException(status_code=400, detail="target_lang is required for layout_engine=direct")
     if mapping_json and target_lang:
         raise HTTPException(status_code=400, detail="Use either mapping_json or target_lang, not both")
+    if not mapping_json and not target_lang:
+        raise HTTPException(
+            status_code=400,
+            detail="target_lang is required unless mapping_json is provided",
+        )
+
+    try:
+        normalized_target = validate_optional_language_code(target_lang, "target_lang")
+        normalized_source = validate_optional_language_code(source_lang, "source_lang")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if normalized_target and normalized_source and normalized_target == normalized_source:
+        raise HTTPException(
+            status_code=400,
+            detail="source_lang and target_lang must be different when both are provided",
+        )
+
+    return (normalized_target, normalized_source)
 
 
 async def run_translation(
@@ -57,8 +88,16 @@ async def run_translation(
     layout_engine: LayoutEngine,
     save_html: bool,
     mapping_json: Optional[str],
+    translate_image_text: bool = False,
 ) -> TranslationResult:
-    validate_request(file.filename, target_lang, layout_engine, mapping_json)
+    target_lang, source_lang = validate_request(
+        file.filename,
+        target_lang,
+        source_lang,
+        layout_engine,
+        mapping_json,
+    )
+    mapping_json = normalize_optional_text(mapping_json)
 
     tmp_root = tempfile.mkdtemp(prefix="doc_generator_api_")
     safe_name = safe_stem(file.filename or "document.pdf")
@@ -79,8 +118,11 @@ async def run_translation(
                 pdf_out=out_pdf,
                 target_lang=target_lang or "",
                 source_lang=source_lang,
+                translate_image_text=translate_image_text,
             )
             return TranslationResult(tmp_root=tmp_root, output_pdf=out_pdf)
+
+        await ensure_chromium_installed_async()
 
         page_size = get_first_page_size(in_pdf)
         html_dir = Path(tmp_root) / "work" / "html"
