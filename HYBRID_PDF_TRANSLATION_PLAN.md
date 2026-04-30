@@ -8,6 +8,8 @@ Build a hybrid PDF translation pipeline that keeps the current `direct` engine s
 - text embedded inside images
 - future routing between native-text and vision-assisted paths
 
+The repo now also supports native translation for selected non-PDF document formats, but this plan remains focused on the PDF-specific hybrid pipeline.
+
 The intended model split remains:
 
 - `Qwen3 30B A3B`: translation, language detection, OCR cleanup
@@ -57,6 +59,11 @@ The intended model split remains:
   - `tests/`
   - `run_tests.sh`
   - `run_regression_tests.sh`
+- Native non-PDF document support:
+  - `txt`
+  - `docx`
+  - `pptx`
+  - conversion-assisted `doc` / `ppt`
 
 ### What was tried and rolled back
 

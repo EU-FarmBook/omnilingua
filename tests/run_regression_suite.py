@@ -8,7 +8,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree as ET
+from zipfile import ZipFile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from regression_fixtures import ensure_document_regression_fixtures
 
 ROOT = Path(__file__).resolve().parent.parent
 CASES_PATH = ROOT / "tests" / "integration_cases.json"
@@ -18,6 +23,8 @@ PYTHON_BIN = ROOT / ".venv" / "bin" / "python"
 TOKEN_SETS = {
     "dutch_basic": {"de", "het", "een", "van", "voor", "met", "onder", "inleiding", "sleutelwoorden"},
 }
+WORD_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+PPT_NAMESPACE = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
 
 
 @dataclass
@@ -67,6 +74,52 @@ def token_hits(text: str, token_set_name: str) -> int:
     return sum(1 for token in lowered if token in tokens)
 
 
+def document_text(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return pdf_text(path)
+    if suffix == ".txt":
+        return path.read_text(encoding="utf-8", errors="ignore")
+    if suffix == ".docx":
+        return _docx_text(path)
+    if suffix == ".pptx":
+        return _pptx_text(path)
+    raise RuntimeError(f"Unsupported output type for text extraction: {suffix}")
+
+
+def _docx_text(path: Path) -> str:
+    texts: list[str] = []
+    with ZipFile(path, "r") as archive:
+        for name in archive.namelist():
+            if not (
+                name == "word/document.xml"
+                or name.startswith("word/header")
+                or name.startswith("word/footer")
+            ):
+                continue
+            root = ET.fromstring(archive.read(name))
+            for node in root.findall(".//w:t", WORD_NAMESPACE):
+                if node.text:
+                    texts.append(node.text)
+    return "\n".join(texts)
+
+
+def _pptx_text(path: Path) -> str:
+    texts: list[str] = []
+    with ZipFile(path, "r") as archive:
+        for name in archive.namelist():
+            if not (
+                (name.startswith("ppt/slides/slide") and name.endswith(".xml"))
+                or (name.startswith("ppt/notesSlides/notesSlide") and name.endswith(".xml"))
+            ):
+                continue
+            root = ET.fromstring(archive.read(name))
+            for node in root.findall(".//a:t", PPT_NAMESPACE):
+                if node.text:
+                    texts.append(node.text)
+    return "\n".join(texts)
+
+
 def run_case(case: dict[str, Any], *, output_root: Path, case_index: int, total_cases: int) -> CaseResult:
     name = case["name"]
     artifact_dir = output_root / name
@@ -74,26 +127,38 @@ def run_case(case: dict[str, Any], *, output_root: Path, case_index: int, total_
         shutil.rmtree(artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    pdf_in = ROOT / case["pdf_in"]
+    input_key = "input"
+    if "pdf_in" in case:
+        input_key = "pdf_in"
+    input_path = ROOT / case[input_key]
     out_dir = artifact_dir / "output"
     work_dir = artifact_dir / "workdir"
     out_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        str(PYTHON_BIN),
-        "cli.py",
-        "--pdf-in",
-        str(pdf_in),
+    cmd = [str(PYTHON_BIN), "cli.py"]
+    if input_path.suffix.lower() == ".pdf":
+        cmd.extend([
+            "--pdf-in",
+            str(input_path),
+            "--layout-engine",
+            case["layout_engine"],
+        ])
+    else:
+        cmd.extend([
+            "--document-in",
+            str(input_path),
+            "--layout-engine",
+            "direct",
+        ])
+    cmd.extend([
         "--workdir",
         str(work_dir),
         "--target-lang",
         case["target_lang"],
-        "--layout-engine",
-        case["layout_engine"],
         "--pdf-out",
         str(out_dir) + "/",
-    ]
+    ])
     if case.get("source_lang"):
         cmd.extend(["--source-lang", case["source_lang"]])
     if case.get("translate_image_text"):
@@ -101,10 +166,10 @@ def run_case(case: dict[str, Any], *, output_root: Path, case_index: int, total_
 
     log(
         f"[{case_index}/{total_cases}] START {name} "
-        f"(engine={case['layout_engine']}, source={case.get('source_lang') or 'auto'}, "
+        f"(engine={case.get('layout_engine', 'native')}, source={case.get('source_lang') or 'auto'}, "
         f"target={case['target_lang']}, image_text={bool(case.get('translate_image_text'))})"
     )
-    log(f"  input: {case['pdf_in']}")
+    log(f"  input: {case[input_key]}")
 
     proc = run_command(cmd, cwd=ROOT)
     (artifact_dir / "stdout.txt").write_text(proc.stdout, encoding="utf-8")
@@ -116,22 +181,22 @@ def run_case(case: dict[str, Any], *, output_root: Path, case_index: int, total_
         log(f"[{case_index}/{total_cases}] FAIL {name} -> {artifact_dir}")
         return CaseResult(name=name, success=False, reasons=reasons, artifact_dir=artifact_dir)
 
-    output_candidates = sorted(out_dir.glob("*.pdf"))
+    output_candidates = sorted(candidate for candidate in out_dir.iterdir() if candidate.is_file())
     if len(output_candidates) != 1:
-        reasons.append(f"Expected exactly 1 output PDF, found {len(output_candidates)}")
+        reasons.append(f"Expected exactly 1 output document, found {len(output_candidates)}")
         return CaseResult(name=name, success=False, reasons=reasons, artifact_dir=artifact_dir)
 
-    pdf_out = output_candidates[0]
+    output_path = output_candidates[0]
     expect = case["expect"]
 
     try:
         if expect.get("same_page_count"):
-            in_pages = pdf_page_count(pdf_in)
-            out_pages = pdf_page_count(pdf_out)
+            in_pages = pdf_page_count(input_path)
+            out_pages = pdf_page_count(output_path)
             if in_pages != out_pages:
                 reasons.append(f"Page count mismatch: input={in_pages}, output={out_pages}")
 
-        output_text = pdf_text(pdf_out)
+        output_text = document_text(output_path)
         (artifact_dir / "output.txt").write_text(output_text, encoding="utf-8")
 
         min_text_chars = expect.get("min_text_chars")
@@ -168,6 +233,7 @@ def main() -> int:
         print(f"Virtualenv Python not found: {PYTHON_BIN}", file=sys.stderr)
         return 2
 
+    ensure_document_regression_fixtures()
     output_root = DEFAULT_OUTPUT_ROOT
     output_root.mkdir(parents=True, exist_ok=True)
     cases = load_cases()

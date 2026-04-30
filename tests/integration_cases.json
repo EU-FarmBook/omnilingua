@@ -54,5 +54,38 @@
       "script": "greek",
       "min_script_chars": 150
     }
+  },
+  {
+    "name": "txt_document_greek",
+    "input": "tests/fixtures/sample_document.txt",
+    "source_lang": "en",
+    "target_lang": "el",
+    "expect": {
+      "min_text_chars": 40,
+      "script": "greek",
+      "min_script_chars": 10
+    }
+  },
+  {
+    "name": "docx_document_greek",
+    "input": "tests/fixtures/sample_document.docx",
+    "source_lang": "en",
+    "target_lang": "el",
+    "expect": {
+      "min_text_chars": 40,
+      "script": "greek",
+      "min_script_chars": 10
+    }
+  },
+  {
+    "name": "pptx_document_greek",
+    "input": "tests/fixtures/sample_slides.pptx",
+    "source_lang": "en",
+    "target_lang": "el",
+    "expect": {
+      "min_text_chars": 20,
+      "script": "greek",
+      "min_script_chars": 6
+    }
   }
 ]
