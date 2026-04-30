@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import fitz  # PyMuPDF
 
@@ -83,6 +83,16 @@ def _can_merge_lines(
 
     if previous.text.rstrip().endswith(":"):
         return False
+    if _looks_like_table_row(previous.text) or _looks_like_table_row(current.text):
+        return False
+    if _looks_like_reference_line(previous.text) or _looks_like_reference_line(current.text):
+        return False
+    if _starts_new_structural_block(current.text):
+        return False
+    if _looks_like_header_or_footer(previous.text) or _looks_like_header_or_footer(current.text):
+        return False
+    if _is_sentence_boundary(previous.text, current.text) and vertical_gap > max(1.5, previous.style.font_size * 0.18):
+        return False
 
     if multi_column and previous.column_index != current.column_index:
         return False
@@ -124,6 +134,58 @@ def _looks_like_table_row(text: str) -> bool:
     separators = stripped.count("  ")
     numeric_tokens = len(re.findall(r"\b\d+(?:[.,]\d+)?\b", stripped))
     return separators >= 2 and numeric_tokens >= 2
+
+
+def _looks_like_reference_line(text: str) -> bool:
+    stripped = " ".join(text.split()).strip()
+    if not stripped:
+        return False
+    if re.match(r"^\[\d+\]", stripped):
+        return True
+    if re.match(r"^\d+\.\s+[A-Z]", stripped):
+        return True
+    if re.search(r"\(\d{4}[a-z]?\)", stripped) and re.search(r"\bhttps?://|\bdoi[:\s]", stripped.lower()):
+        return True
+    return False
+
+
+def _starts_new_structural_block(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    if stripped.startswith(("- ", "• ", "▪ ", "* ")):
+        return True
+    if re.match(r"^(figure|fig\.|table|abstract|keywords|references)\b", stripped, re.IGNORECASE):
+        return True
+    if re.match(r"^\d+(?:\.\d+)*\s+[A-Z]", stripped):
+        return True
+    return False
+
+
+def _is_sentence_boundary(previous_text: str, current_text: str) -> bool:
+    prev = previous_text.rstrip()
+    curr = current_text.lstrip()
+    if not prev or not curr:
+        return False
+    if prev.endswith((".", "!", "?")) and curr[:1].isupper():
+        return True
+    if prev.endswith(";") and curr[:1].isupper():
+        return True
+    return False
+
+
+def _looks_like_header_or_footer(text: str) -> bool:
+    stripped = " ".join(text.split()).strip()
+    if not stripped:
+        return False
+    lower = stripped.lower()
+    if len(stripped) <= 18 and re.search(r"\bpage\s+\d+\b", lower):
+        return True
+    if re.fullmatch(r"\d+", stripped):
+        return True
+    if re.search(r"\bdoi[:\s]", lower) or stripped.startswith("http"):
+        return True
+    return False
 
 
 def _classify_scholarly_kind(
@@ -232,6 +294,7 @@ def _with_column_metadata(
                 style=block.style,
                 raw_block_id=block.raw_block_id,
                 column_index=column_index,
+                line_count=block.line_count,
             )
         )
     return result
@@ -306,6 +369,7 @@ def _group_page_lines(
                 style=current.style,
                 raw_block_id=current.raw_block_id,
                 column_index=current.column_index,
+                line_count=current_line_count,
             )
         )
         next_block_id += 1
@@ -329,6 +393,7 @@ def _group_page_lines(
                 style=current.style,
                 raw_block_id=current.raw_block_id,
                 column_index=current.column_index,
+                line_count=current.line_count + line.line_count,
             )
             current_line_count += 1
             continue
@@ -388,6 +453,7 @@ def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
                                 color_rgb=color_rgb,
                             ),
                             raw_block_id=raw_block_index,
+                            line_count=1,
                         )
                     )
                     line_id += 1
@@ -420,23 +486,37 @@ def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
 def collect_language_detection_samples(
     blocks: List[ExtractedTextBlock],
     *,
-    min_length: int = 20,
-    limit: int = 25,
+    min_length: int = 24,
+    limit: int = 18,
 ) -> List[str]:
     candidates: List[str] = []
+    aggregated: List[str] = []
+    buffer: List[str] = []
+    buffer_chars = 0
 
     for block in blocks:
         text = " ".join(block.text.split()).strip()
         if len(text) < min_length:
             continue
-        if text.endswith(":"):
+        if _should_skip_detection_text(block, text):
             continue
         candidates.append(text)
-        if len(candidates) >= limit:
+        buffer.append(text)
+        buffer_chars += len(text)
+        if buffer_chars >= 320:
+            aggregated.append(" ".join(buffer))
+            buffer = []
+            buffer_chars = 0
+        if len(candidates) >= limit * 2:
             break
 
+    if buffer:
+        aggregated.append(" ".join(buffer))
+
+    if aggregated:
+        return aggregated[:limit]
     if candidates:
-        return candidates
+        return candidates[:limit]
 
     fallback: List[str] = []
     for block in blocks[:limit]:
@@ -444,3 +524,44 @@ def collect_language_detection_samples(
         if text:
             fallback.append(text)
     return fallback
+
+
+def _should_skip_detection_text(block: ExtractedTextBlock, text: str) -> bool:
+    if text.endswith(":"):
+        return True
+    if block.kind in {"caption", "reference", "table", "keywords", "label", "bullet"}:
+        return True
+    if _looks_like_header_or_footer(text):
+        return True
+    if "@" in text or "http" in text.lower():
+        return True
+    letters = sum(1 for c in text if c.isalpha())
+    digits = sum(1 for c in text if c.isdigit())
+    if letters < 12:
+        return True
+    if digits and digits >= max(3, letters * 0.35):
+        return True
+    if sum(1 for ch in text if ch.isupper()) >= max(10, int(len(text) * 0.55)):
+        return True
+    return False
+
+
+def extract_pdf_metadata_language(pdf_path: Path) -> Optional[str]:
+    doc = fitz.open(str(pdf_path))
+    try:
+        metadata = doc.metadata or {}
+        raw_candidates = [
+            metadata.get("language"),
+            metadata.get("lang"),
+            metadata.get("subject"),
+            metadata.get("keywords"),
+        ]
+        for raw in raw_candidates:
+            if not raw:
+                continue
+            match = re.search(r"\b([a-z]{2})(?:[-_][A-Za-z]{2})?\b", str(raw), re.IGNORECASE)
+            if match:
+                return match.group(1).lower()
+        return None
+    finally:
+        doc.close()

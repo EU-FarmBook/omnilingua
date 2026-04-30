@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from openai import OpenAI, APIConnectionError, APIError
 
 from app.core.model_config import get_text_model_config
+from app.core.languages import SUPPORTED_EU_LANGUAGE_CODES, normalize_language_code
 
 # Load environment variables
 load_dotenv()
@@ -96,6 +97,53 @@ class TextNode:
     is_translatable: bool = True
 
 
+def _normalize_detected_language_code(raw_value: Optional[str]) -> Optional[str]:
+    if not raw_value:
+        return None
+    text = normalize_language_code(str(raw_value))
+    match = re.search(r"\b([a-z]{2})\b", text)
+    if not match:
+        return None
+    code = match.group(1)
+    if code not in SUPPORTED_EU_LANGUAGE_CODES:
+        return None
+    return code
+
+
+def _prepare_language_detection_samples(text_samples: List[str]) -> List[str]:
+    cleaned: List[str] = []
+    for sample in text_samples:
+        text = " ".join(str(sample).split()).strip()
+        if len(text) < 24:
+            continue
+        if re.search(r"\bhttps?://|\bwww\.|@", text.lower()):
+            continue
+        letters = sum(1 for c in text if c.isalpha())
+        digits = sum(1 for c in text if c.isdigit())
+        if letters < 12:
+            continue
+        if digits >= max(4, int(letters * 0.35)):
+            continue
+        cleaned.append(text)
+
+    if cleaned:
+        aggregated: List[str] = []
+        buffer: List[str] = []
+        buffer_chars = 0
+        for text in cleaned:
+            buffer.append(text)
+            buffer_chars += len(text)
+            if buffer_chars >= 320:
+                aggregated.append(" ".join(buffer))
+                buffer = []
+                buffer_chars = 0
+        if buffer:
+            aggregated.append(" ".join(buffer))
+        return aggregated[:10]
+
+    return [text.strip() for text in text_samples if str(text).strip()][:10]
+
+
 class LLMTranslator:
     """OpenAI-compatible LLM translator for document translation."""
     
@@ -123,10 +171,17 @@ class LLMTranslator:
             timeout=self.timeout
         )
     
-    def detect_language(self, text_samples: List[str]) -> str:
+    def detect_language(self, text_samples: List[str], metadata_language: Optional[str] = None) -> str:
         """Detect the source language from text samples."""
-        samples = text_samples[:10]
-        combined = "\n".join(f"- {s[:200]}" for s in samples if s.strip())
+        normalized_metadata = _normalize_detected_language_code(metadata_language)
+        if normalized_metadata:
+            return normalized_metadata
+
+        cleaned_samples = _prepare_language_detection_samples(text_samples)
+        samples = cleaned_samples[:10]
+        combined = "\n".join(f"- {s[:280]}" for s in samples if s.strip())
+        if not combined:
+            return "en"
         
         prompt = f"""Analyze these text samples and identify the language.
 
@@ -146,8 +201,7 @@ Respond with ONLY the ISO 639-1 language code (e.g., "en", "es", "fr", "de")."""
                 max_tokens=10
             )
             
-            lang_code = response.choices[0].message.content.strip().lower()
-            lang_code = re.sub(r'[^a-z]', '', lang_code)[:2]
+            lang_code = _normalize_detected_language_code(response.choices[0].message.content)
             return lang_code if lang_code else "en"
             
         except APIConnectionError as e:
@@ -157,7 +211,7 @@ Respond with ONLY the ISO 639-1 language code (e.g., "en", "es", "fr", "de")."""
         except APIError as e:
             print(f"\n❌ ERROR: LLM API returned an error: {e}")
             sys.exit(1)
-    
+
     def translate_nodes(
         self, 
         nodes: List[TextNode], 

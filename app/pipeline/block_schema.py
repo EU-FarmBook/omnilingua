@@ -42,3 +42,4 @@ class ExtractedTextBlock:
     style: TextStyleHint
     raw_block_id: int | None = None
     column_index: int | None = None
+    line_count: int = 1
