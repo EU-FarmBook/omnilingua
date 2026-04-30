@@ -23,6 +23,10 @@ The intended model split remains:
 - Centralized font fallback in `app/pipeline/fonts.py`
 - Direct engine refactor to use reusable extracted blocks
 - Column-aware ordering for likely two-column pages
+- Stronger language-detection fallback for missing `source_lang`:
+  - larger cleaned samples
+  - noisy-line filtering
+  - PDF metadata use when available
 - Conservative scholarly block classification:
   - `title`
   - `abstract`
@@ -30,6 +34,17 @@ The intended model split remains:
   - `caption`
   - `reference`
   - `table`
+- Stricter direct-mode line grouping and fitting for dense layouts:
+  - reduced harmful merges
+  - more conservative width growth in columns
+  - more vertical allowance based on block shape
+- Basic direct-mode link restoration:
+  - capture page links before rewrite
+  - restore them after text replacement
+- Improved glyph fallback handling:
+  - wider Unicode-capable font search
+  - glyph-coverage-based fallback selection
+  - symbol sanitization for fragile characters
 - Experimental direct-mode image-text translation:
   - cropped embedded image regions
   - `InternVL` extraction
@@ -99,7 +114,8 @@ The project still does not solve these well enough:
 - true table reconstruction
 - span-level scholarly typography preservation
 - superscripts/subscripts and formula fidelity
-- robust link/annotation preservation in direct mode
+- comprehensive link/annotation preservation validation across real PDFs
+- perfect glyph coverage for all edge-case symbols and mixed fonts
 - safe automatic routing between text-only and vision-assisted paths
 - reliable image-text quality scoring
 
@@ -109,9 +125,10 @@ The project still does not solve these well enough:
 
 Focus:
 
-- stop treating references, captions, and table-like rows as generic prose
-- add stricter fitting thresholds for protected scholarly blocks
-- reduce over-aggressive shrinkage in narrow scientific layouts
+- strengthen handling of references, captions, and table-like rows
+- improve protected scholarly block fitting further
+- reduce shrink-heavy writeback in narrow scientific layouts
+- improve scientific text fidelity where line grouping is still too coarse
 
 Why next:
 
@@ -130,16 +147,17 @@ Why next:
 
 - the experimental image-text lane exists, but it needs precision before it can be trusted broadly
 
-### 3. Add annotation/link preservation
+### 3. Validate and harden annotation/link preservation
 
 Focus:
 
-- preserve real PDF annotations independently from text rewriting
-- restore link boxes after direct rewriting
+- test the current restore approach on real annotated PDFs
+- harden edge cases where visible links and actual PDF annotations differ
+- add regression coverage for annotated documents
 
 Why next:
 
-- this is a user-visible correctness problem and does not require a redesign
+- the base implementation exists, but it is not proven broadly enough yet
 
 ### 4. Add real routing later
 
@@ -174,7 +192,10 @@ The repo is no longer at the “just a plan” stage. It already has:
 
 - reusable native extraction
 - safer config and validation
+- improved fallback language detection
 - direct-mode structure improvements
+- basic link restoration
+- stronger glyph fallback
 - experimental direct-mode image-text translation
 - regression automation
 

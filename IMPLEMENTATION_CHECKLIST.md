@@ -15,11 +15,15 @@ This checklist is updated to match what is already done in the repo.
 - Shared extracted block schema
 - Reusable native extraction module
 - Centralized language validation for the 24 EU languages
+- Improved fallback language detection for missing `source_lang`
 - Standardized text/vision model config
 - Centralized font fallback
+- Improved glyph fallback and symbol sanitization
 - Direct-mode extraction refactor
 - Multi-column-aware ordering
 - Conservative scholarly block classification
+- Stricter scholarly line grouping and fitting heuristics
+- Basic direct-mode link restoration
 - Experimental direct-mode image-text translation
 - Standard endpoint simplification:
   - `/translate/pdf` -> `direct` only
@@ -31,7 +35,7 @@ This checklist is updated to match what is already done in the repo.
 
 1. Improve scholarly layout fidelity in `direct`
 2. Improve experimental image-text translation precision in `direct`
-3. Preserve links and annotations
+3. Validate and harden link/annotation preservation
 4. Expand regression coverage and quality gates
 5. Add routing and `auto` mode only after the above are reliable
 
@@ -49,6 +53,7 @@ Estimated effort: ongoing
 - Reduce harmful merges on multi-column pages
 - Tighten fitting rules for protected scholarly blocks
 - Reduce shrink-heavy writeback in narrow scientific layouts
+- Improve scientific text fidelity where superscripts/subscripts and formulas are still weak
 
 Definition of done:
 
@@ -74,8 +79,8 @@ Definition of done:
 
 Estimated effort: 2 to 4 days
 
-- Preserve PDF annotations independently of text rewriting
-- Restore hyperlinks after direct rewrite
+- Validate the current link-restore approach on real annotated PDFs
+- Harden edge cases around annotation types and visible-vs-actual links
 - Add regression checks for annotated documents
 
 Definition of done:
@@ -115,7 +120,7 @@ Definition of done:
 - Retest current research-paper cases with the latest column-aware extraction
 - Improve scholarly protected-block handling further if those still fail visibly
 - Add at least one regression case with `translate_image_text=true`
-- Add annotation-preservation work after layout quality stabilizes
+- Add at least one annotated/link-heavy regression case
 
 ## Current Test Layout
 
