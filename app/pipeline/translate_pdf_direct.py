@@ -10,6 +10,7 @@ import fitz  # PyMuPDF
 from app.pipeline.block_schema import ExtractedTextBlock
 from app.pipeline.extract_native_blocks import (
     collect_language_detection_samples,
+    extract_pdf_metadata_language,
     extract_native_text_blocks,
 )
 from app.pipeline.fonts import resolve_font_for_text
@@ -31,6 +32,44 @@ class DirectTranslationStats:
     image_blocks_rejected: int = 0
     image_api_calls: int = 0
 
+
+def _capture_page_links(page: fitz.Page) -> list[dict]:
+    captured: list[dict] = []
+    for link in page.get_links():
+        link_copy = dict(link)
+        if "from" in link_copy and isinstance(link_copy["from"], fitz.Rect):
+            rect = link_copy["from"]
+            link_copy["from"] = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1)
+        captured.append(link_copy)
+    return captured
+
+
+def _restore_page_links(page: fitz.Page, links: list[dict]) -> None:
+    seen: set[tuple] = set()
+    for link in links:
+        if "from" not in link:
+            continue
+        rect = link["from"]
+        key = (
+            round(rect.x0, 2),
+            round(rect.y0, 2),
+            round(rect.x1, 2),
+            round(rect.y1, 2),
+            link.get("kind"),
+            link.get("uri"),
+            link.get("page"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+
+        payload = {k: v for k, v in link.items() if k in {"kind", "from", "uri", "page", "to", "file", "name", "zoom"}}
+        try:
+            page.insert_link(payload)
+        except Exception:
+            continue
+
+
 def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated: str) -> bool:
     rect = fitz.Rect(*block.bbox)
     if rect.width < 3 or rect.height < 3:
@@ -41,20 +80,25 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
         return False
 
     if block.kind in {"title", "abstract"}:
-        height_factor = 2.6
-        extra_width = min(28.0, max(0.0, block.style.font_size * 1.5))
+        height_factor = max(2.8, 1.1 + (block.line_count * 1.1))
+        extra_width = min(20.0, max(0.0, block.style.font_size * 1.1))
     elif block.kind in {"caption", "reference", "table"}:
-        height_factor = 1.65
-        extra_width = min(10.0, max(0.0, block.style.font_size * 0.4))
+        height_factor = max(1.8, 0.95 + (block.line_count * 0.95))
+        extra_width = min(6.0, max(0.0, block.style.font_size * 0.25))
     elif block.kind == "paragraph":
-        height_factor = 2.2
-        extra_width = min(24.0, max(0.0, block.style.font_size * 1.2))
+        height_factor = max(2.4, 1.15 + (block.line_count * 1.02))
+        extra_width = min(14.0, max(0.0, block.style.font_size * 0.75))
     else:
-        height_factor = 1.35
-        extra_width = min(16.0, max(0.0, block.style.font_size * 0.8))
+        height_factor = max(1.45, 0.9 + (block.line_count * 0.7))
+        extra_width = min(10.0, max(0.0, block.style.font_size * 0.5))
+
+    if block.column_index is not None:
+        extra_width = min(extra_width, 6.0)
+        height_factor *= 1.18
 
     min_h = max(rect.height, block.style.font_size * height_factor)
-    rect = fitz.Rect(rect.x0, rect.y0, rect.x1 + extra_width, rect.y0 + min_h)
+    max_x1 = min(page.rect.x1 - 2.0, rect.x1 + extra_width)
+    rect = fitz.Rect(rect.x0, rect.y0, max_x1, rect.y0 + min_h)
 
     # Remove source text in this line box while preserving images / line art / background.
     page.add_redact_annot(rect, fill=None)
@@ -64,7 +108,7 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
         text=getattr(fitz, "PDF_REDACT_TEXT_REMOVE", 0),
     )
 
-    fontname, fontfile = resolve_font_for_text(page, block.style, text)
+    fontname, fontfile, render_text = resolve_font_for_text(page, block.style, text)
     if block.kind == "title":
         size = max(8.0, min(block.style.font_size, 32.0))
         line_height = 1.1
@@ -81,7 +125,7 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
     for _ in range(10):
         spare = page.insert_textbox(
             rect,
-            text,
+            render_text,
             fontname=fontname,
             fontfile=fontfile,
             fontsize=size,
@@ -95,7 +139,7 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
         size *= 0.92
 
     # Last fallback to avoid complete miss.
-    clipped = text[: max(1, int(len(text) * 0.72))].rstrip() + "…"
+    clipped = render_text[: max(1, int(len(render_text) * 0.72))].rstrip() + "…"
     spare = page.insert_textbox(
         rect,
         clipped,
@@ -124,7 +168,8 @@ def translate_pdf_direct(
     translator = LLMTranslator()
     if source_lang is None:
         samples = collect_language_detection_samples(blocks)
-        source_lang = translator.detect_language(samples)
+        metadata_language = extract_pdf_metadata_language(pdf_in)
+        source_lang = translator.detect_language(samples, metadata_language=metadata_language)
         print(f"Detected source language: {source_lang}")
 
     if source_lang == target_lang:
@@ -163,6 +208,7 @@ def translate_pdf_direct(
         translated_map[block.block_id] = candidate
 
     doc = fitz.open(str(pdf_in))
+    page_links = {page_index: _capture_page_links(page) for page_index, page in enumerate(doc)}
     image_stats = None
     try:
         translated_count = 0
@@ -180,6 +226,8 @@ def translate_pdf_direct(
                 source_lang=source_lang,
                 target_lang=target_lang,
             )
+        for page_index, page in enumerate(doc):
+            _restore_page_links(page, page_links.get(page_index, []))
         pdf_out.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(pdf_out), garbage=3, deflate=True)
     finally:

@@ -4,8 +4,10 @@ import unittest
 
 from app.pipeline.block_schema import ExtractedTextBlock, TextStyleHint
 from app.pipeline.extract_native_blocks import (
+    _can_merge_lines,
     _classify_scholarly_kind,
     _detect_multicolumn_page,
+    collect_language_detection_samples,
     _sort_page_lines,
     _with_column_metadata,
 )
@@ -110,6 +112,61 @@ class ExtractNativeBlocksTests(unittest.TestCase):
         self.assertEqual(ordered_text[0], "Title")
         self.assertEqual(ordered_text[1:9], ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"])
         self.assertEqual(ordered_text[9:], ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"])
+
+    def test_detection_samples_skip_noisy_reference_and_table_content(self) -> None:
+        style = TextStyleHint(font_name="Times", font_size=10.0, color_rgb=(0, 0, 0))
+        blocks = [
+            ExtractedTextBlock(
+                block_id=1,
+                page_index=0,
+                bbox=(0, 0, 100, 20),
+                text="Abstract This study investigates how farm health interventions scale across regions.",
+                source="native",
+                kind="abstract",
+                confidence=1.0,
+                style=style,
+            ),
+            ExtractedTextBlock(
+                block_id=2,
+                page_index=0,
+                bbox=(0, 30, 100, 50),
+                text="[1] Smith et al. (2023) https://doi.org/example",
+                source="native",
+                kind="reference",
+                confidence=1.0,
+                style=style,
+            ),
+            ExtractedTextBlock(
+                block_id=3,
+                page_index=0,
+                bbox=(0, 60, 100, 80),
+                text="0.001 mg kg−1   98   12",
+                source="native",
+                kind="table",
+                confidence=1.0,
+                style=style,
+            ),
+            ExtractedTextBlock(
+                block_id=4,
+                page_index=0,
+                bbox=(0, 90, 100, 110),
+                text="The protocol was evaluated under realistic farm conditions across multiple partner sites.",
+                source="native",
+                kind="paragraph",
+                confidence=1.0,
+                style=style,
+            ),
+        ]
+
+        samples = collect_language_detection_samples(blocks)
+
+        self.assertEqual(len(samples), 1)
+        self.assertIn("realistic farm conditions", samples[0])
+
+    def test_does_not_merge_reference_like_lines(self) -> None:
+        left = _block(1, 40, 100, 260, 112, "[1] Smith et al. (2023) Journal of Tests")
+        right = _block(2, 40, 114, 260, 126, "https://doi.org/10.1000/test")
+        self.assertFalse(_can_merge_lines(left, right, multi_column=False))
 
 
 if __name__ == "__main__":

@@ -90,13 +90,13 @@ def _overlay_text_on_rect(page: fitz.Page, rect: fitz.Rect, translated_text: str
         font_size=max(7.5, min(18.0, target_rect.height * 0.72)),
         color_rgb=(0.05, 0.05, 0.05),
     )
-    font_name, font_file = resolve_font_for_text(page, style, translated_text)
+    font_name, font_file, render_text = resolve_font_for_text(page, style, translated_text)
     font_size = style.font_size
 
     for _ in range(6):
         spare = page.insert_textbox(
             target_rect,
-            translated_text,
+            render_text,
             fontname=font_name,
             fontfile=font_file,
             fontsize=font_size,
