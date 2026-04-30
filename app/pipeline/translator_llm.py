@@ -227,7 +227,67 @@ Respond with ONLY the ISO 639-1 language code (e.g., "en", "es", "fr", "de")."""
             translations.update(batch_translations)
         
         return translations
-    
+
+    def translate_strings_batch(
+        self,
+        strings: List[str],
+        source_lang: str,
+        target_lang: str,
+    ) -> Dict[int, str]:
+        if not strings:
+            return {}
+
+        items = []
+        for index, text in enumerate(strings):
+            safe_text = json.dumps(text, ensure_ascii=False)
+            items.append(f'"{index}": {safe_text}')
+
+        items_json = ",\n    ".join(items)
+        system_prompt = f"""You are an expert document translator. Translate text accurately while preserving meaning and formatting.
+
+CRITICAL RULES:
+1. Translate ONLY the natural language content
+2. PRESERVE exactly: numbers, dates, emails, URLs, codes, acronyms in ALL CAPS
+3. Maintain structure where possible
+4. Respond ONLY with valid JSON in the format: {{"id": "translation", ...}}"""
+
+        user_prompt = f"""Translate from {source_lang} to {target_lang}.
+
+Each item is a separate text snippet. Translate each independently:
+
+{{
+    {items_json}
+}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
+            )
+        except (APIConnectionError, APIError) as e:
+            print(f"\n⚠️  API Error: {e}")
+            return {}
+
+        content = response.choices[0].message.content.strip()
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+
+        try:
+            result = json.loads(content)
+            return {int(k): v for k, v in result.items()}
+        except json.JSONDecodeError:
+            pattern = r'"(\d+)"\s*:\s*"([^"]*(?:\\"[^"]*)*)"'
+            matches = re.findall(pattern, content)
+            if matches:
+                return {int(k): v.replace('\\"', '"') for k, v in matches}
+            return {}
+
     def _translate_batch(
         self, 
         batch: List[TextNode], 

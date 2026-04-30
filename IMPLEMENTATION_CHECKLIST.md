@@ -7,6 +7,7 @@ Keep the currently working `direct` path stable while improving:
 - scholarly PDF layout preservation
 - experimental image-text translation in direct mode
 - regression safety
+- document-format support beyond PDF
 
 This checklist is updated to match what is already done in the repo.
 
@@ -28,8 +29,13 @@ This checklist is updated to match what is already done in the repo.
 - Standard endpoint simplification:
   - `/translate/pdf` -> `direct` only
   - `/translate/pdf/advanced` -> advanced options
+- General document support:
+  - `/translate/document`
+  - native `txt`, `docx`, `pptx`
+  - conversion-assisted `doc`, `ppt`
 - Unit test suite
 - Manifest-driven regression harness
+- Native TXT/DOCX/PPTX regression coverage
 
 ## Current Priority Order
 
@@ -37,7 +43,8 @@ This checklist is updated to match what is already done in the repo.
 2. Improve experimental image-text translation precision in `direct`
 3. Validate and harden link/annotation preservation
 4. Expand regression coverage and quality gates
-5. Add routing and `auto` mode only after the above are reliable
+5. Harden DOCX/PPTX formatting behavior
+6. Add routing and `auto` mode only after the above are reliable
 
 ## Milestone 1: Scholarly PDF Hardening
 
@@ -115,12 +122,27 @@ Definition of done:
 
 - routing decisions improve quality rather than just automating current weaknesses
 
+## Milestone 6: DOCX / PPTX Quality Hardening
+
+Estimated effort: ongoing
+
+- Preserve formatting more precisely when translated text expands
+- Improve handling of split runs inside DOCX paragraphs
+- Improve PPTX shape overflow behavior and grouped text handling
+- Add real user-supplied DOCX/PPTX regression samples over time
+
+Definition of done:
+
+- translated DOCX and PPTX outputs remain structurally correct
+- common formatting regressions are caught before release
+
 ## Immediate Next Tasks
 
 - Retest current research-paper cases with the latest column-aware extraction
 - Improve scholarly protected-block handling further if those still fail visibly
 - Add at least one regression case with `translate_image_text=true`
 - Add at least one annotated/link-heavy regression case
+- Add at least one real-world DOCX and one real-world PPTX regression case when available
 
 ## Current Test Layout
 

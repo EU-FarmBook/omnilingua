@@ -1,0 +1,3 @@
+This sample text document is used for translation regression testing.
+
+It contains two short paragraphs about sustainable agriculture and circular bioeconomy.

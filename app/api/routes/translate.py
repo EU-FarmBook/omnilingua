@@ -5,6 +5,11 @@ from typing import Annotated, Literal, Optional
 from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
 from fastapi.responses import FileResponse
 
+from app.services.document_translate_service import (
+    cleanup_dir as cleanup_document_dir,
+    detect_media_type,
+    run_document_translation,
+)
 from app.services.pdf_translate_service import cleanup_dir, run_translation
 
 
@@ -13,7 +18,19 @@ router = APIRouter()
 
 CommonFile = Annotated[
     UploadFile,
-    File(description="Born-digital PDF file to translate."),
+    File(
+        description="Born-digital PDF file to translate.",
+        media_type="application/pdf",
+        json_schema_extra={
+            "contentMediaType": "application/pdf",
+        },
+    ),
+]
+DocumentFile = Annotated[
+    UploadFile,
+    File(
+        description="Supported document file to translate (.pdf, .txt, .doc, .docx, .ppt, .pptx).",
+    ),
 ]
 CommonTargetLang = Annotated[
     Optional[str],
@@ -62,6 +79,17 @@ AdvancedTranslateImageText = Annotated[
     "/translate/pdf",
     summary="Translate a PDF",
     description="Common translation endpoint. Uses the recommended direct engine automatically.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "multipart/form-data": {
+                    "encoding": {
+                        "file": {"contentType": "application/pdf"}
+                    }
+                }
+            }
+        }
+    },
 )
 async def translate_pdf(
     background_tasks: BackgroundTasks,
@@ -87,9 +115,44 @@ async def translate_pdf(
 
 
 @router.post(
+    "/translate/document",
+    summary="Translate a document",
+    description="Translate a supported document file. Supports .pdf, .txt, .doc, .docx, .ppt, and .pptx.",
+)
+async def translate_document(
+    background_tasks: BackgroundTasks,
+    file: DocumentFile,
+    target_lang: CommonTargetLang = None,
+    source_lang: CommonSourceLang = None,
+) -> FileResponse:
+    result = await run_document_translation(
+        file=file,
+        target_lang=target_lang,
+        source_lang=source_lang,
+    )
+    background_tasks.add_task(cleanup_document_dir, result.tmp_root)
+    return FileResponse(
+        path=result.output_path,
+        media_type=detect_media_type(result.output_path),
+        filename=result.output_path.name,
+    )
+
+
+@router.post(
     "/translate/pdf/advanced",
     summary="Translate or replace PDF text (advanced)",
     description="Advanced endpoint for choosing html/direct mode, saving intermediate HTML, or using mapping_json exact replacements instead of translation.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "multipart/form-data": {
+                    "encoding": {
+                        "file": {"contentType": "application/pdf"}
+                    }
+                }
+            }
+        }
+    },
 )
 async def translate_pdf_advanced(
     background_tasks: BackgroundTasks,

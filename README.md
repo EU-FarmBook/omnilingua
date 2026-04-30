@@ -1,15 +1,18 @@
 # Doc Generator
 
-Translate born-digital PDFs while preserving layout as much as possible.
+Translate born-digital PDFs and selected office/text documents while preserving structure as much as possible.
 
-This project supports two engines:
-- `direct`: the standard production path
-- `html`: advanced/fallback `PDF -> HTML -> translate/replace -> PDF`
+This project supports:
+- native document translation for `txt`, `docx`, and `pptx`
+- conversion-assisted support for legacy `doc` and `ppt` when LibreOffice/`soffice` is available
+- two PDF engines:
+  - `direct`: the standard production path
+  - `html`: advanced/fallback `PDF -> HTML -> translate/replace -> PDF`
 
 ## Features
 
 - CLI workflow for translation and JSON mapping replacement
-- FastAPI endpoint for upload + translated PDF download
+- FastAPI endpoints for translated PDF/document download
 - Auto language detection (or manual `--source-lang`)
 - Validation for the 24 EU language codes
 - Output auto-naming with language suffix when output is a directory
@@ -27,6 +30,7 @@ This project supports two engines:
 - Poppler tools (`pdftohtml`, `pdftotext`, `pdfinfo`) for `html` engine
 - Playwright Chromium for `html` engine
 - OpenAI-compatible LLM endpoint
+- LibreOffice/`soffice` only if you want legacy `.doc` or `.ppt` conversion support
 
 Install system deps (Ubuntu/Debian):
 
@@ -120,11 +124,28 @@ python cli.py \
 }
 ```
 
+### 4) TXT / DOCX / PPTX / DOC / PPT
+
+```bash
+python cli.py \
+  --document-in input/document.docx \
+  --workdir ./work \
+  --target-lang es \
+  --pdf-out output/
+```
+
+Notes:
+
+- `.txt`, `.docx`, and `.pptx` are translated natively
+- `.doc` and `.ppt` are converted to `.docx` / `.pptx` first when LibreOffice/`soffice` is available
+- for non-PDF documents, `--layout-engine html`, `--mapping-json`, and `--save-html` are not used
+
 ### Output naming behavior
 
 If `--pdf-out` is a directory, output is auto-named as:
 - `<input_stem>_<target_lang>.pdf` (translation)
 - `<input_stem>_mapped.pdf` (mapping mode)
+- for non-PDF documents, the original extension is preserved where possible
 
 ## FastAPI Usage
 
@@ -177,6 +198,16 @@ curl -X POST "http://localhost:15000/translate/pdf/advanced" \
   -F "target_lang=es" \
   -F "layout_engine=html" \
   -o output/document_es_html.pdf
+```
+
+Translate a supported document (`/translate/document`):
+
+```bash
+curl -X POST "http://localhost:15000/translate/document" \
+  -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
+  -F "file=@input/document.docx" \
+  -F "target_lang=es" \
+  -o output/document_es.docx
 ```
 
 ## Docker
@@ -256,10 +287,42 @@ Run regression translations for the cases listed in `tests/integration_cases.jso
 
 Regression outputs and artifacts are written under `output/regression/`.
 
+The regression suite now covers:
+
+- representative PDF cases
+- one TXT fixture
+- one DOCX fixture
+- one PPTX fixture
+
+## Structured Files Guidance
+
+This project is currently a PDF translation service. It does not translate JSON, CSV, or XLSX files directly.
+
+If support for those formats is considered later, the safe rule is:
+
+- translate presentation text
+- do not translate operational or canonical data in place
+
+Practical guidance:
+
+- i18n JSON such as `i18n/en.json`: translate values only, never keys
+- config/API JSON/database exports: do not translate in place
+- user-facing CSV/XLSX reports or catalogs: translate selectively
+- raw datasets, exports, IDs, codes, slugs, enums, and programmatic column names: do not translate
+
+Why this matters:
+
+- translating JSON keys or technical values can break parsing and application behavior
+- translating dataset identifiers or programmatic headers can break joins, pipelines, and downstream code
+- dates, currencies, numbers, format strings, URLs, and placeholders often require preservation rather than translation
+
+The safest long-term approach for structured formats is to extract translatable strings into a dedicated localization layer and keep data files in their canonical form.
+
 ## Notes
 
 - `direct` engine is usually better for complex layouts.
 - `/translate/pdf` is the recommended path and always uses `direct`.
+- `/translate/document` supports `.pdf`, `.txt`, `.doc`, `.docx`, `.ppt`, and `.pptx`.
 - `html` remains available only through `/translate/pdf/advanced`.
 - `html` engine can be useful when preserving HTML intermediates is important.
 - `translate_image_text` is experimental and available only through the advanced direct flow.
