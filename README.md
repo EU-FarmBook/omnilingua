@@ -220,3 +220,4 @@ doc_generator/
 - `direct` engine is usually better for complex layouts.
 - `html` engine can be useful when preserving HTML intermediates is important.
 - `work/` and `output/` are generated artifacts and should not be committed.
+- Regression test outputs are written under `output/regression/`.

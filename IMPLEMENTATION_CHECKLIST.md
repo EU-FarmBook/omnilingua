@@ -91,7 +91,7 @@ Estimated effort: 2 to 4 days
   - language-script presence
   - target-language token hits
   - image-text opt-in cases
-- Keep outputs isolated under `work/regression/`
+- Keep regression outputs isolated under `output/regression/`
 
 Definition of done:
 

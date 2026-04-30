@@ -12,7 +12,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 CASES_PATH = ROOT / "tests" / "integration_cases.json"
-DEFAULT_WORK_ROOT = ROOT / "work" / "regression"
+DEFAULT_OUTPUT_ROOT = ROOT / "output" / "regression"
 PYTHON_BIN = ROOT / ".venv" / "bin" / "python"
 
 TOKEN_SETS = {
@@ -26,6 +26,10 @@ class CaseResult:
     success: bool
     reasons: list[str]
     artifact_dir: Path
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
 
 
 def load_cases() -> list[dict[str, Any]]:
@@ -63,9 +67,9 @@ def token_hits(text: str, token_set_name: str) -> int:
     return sum(1 for token in lowered if token in tokens)
 
 
-def run_case(case: dict[str, Any], *, work_root: Path) -> CaseResult:
+def run_case(case: dict[str, Any], *, output_root: Path, case_index: int, total_cases: int) -> CaseResult:
     name = case["name"]
-    artifact_dir = work_root / name
+    artifact_dir = output_root / name
     if artifact_dir.exists():
         shutil.rmtree(artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -95,6 +99,13 @@ def run_case(case: dict[str, Any], *, work_root: Path) -> CaseResult:
     if case.get("translate_image_text"):
         cmd.append("--translate-image-text")
 
+    log(
+        f"[{case_index}/{total_cases}] START {name} "
+        f"(engine={case['layout_engine']}, source={case.get('source_lang') or 'auto'}, "
+        f"target={case['target_lang']}, image_text={bool(case.get('translate_image_text'))})"
+    )
+    log(f"  input: {case['pdf_in']}")
+
     proc = run_command(cmd, cwd=ROOT)
     (artifact_dir / "stdout.txt").write_text(proc.stdout, encoding="utf-8")
     (artifact_dir / "stderr.txt").write_text(proc.stderr, encoding="utf-8")
@@ -102,6 +113,7 @@ def run_case(case: dict[str, Any], *, work_root: Path) -> CaseResult:
     reasons: list[str] = []
     if proc.returncode != 0:
         reasons.append(f"CLI failed with exit code {proc.returncode}")
+        log(f"[{case_index}/{total_cases}] FAIL {name} -> {artifact_dir}")
         return CaseResult(name=name, success=False, reasons=reasons, artifact_dir=artifact_dir)
 
     output_candidates = sorted(out_dir.glob("*.pdf"))
@@ -145,7 +157,10 @@ def run_case(case: dict[str, Any], *, work_root: Path) -> CaseResult:
     except Exception as exc:
         reasons.append(str(exc))
 
-    return CaseResult(name=name, success=not reasons, reasons=reasons, artifact_dir=artifact_dir)
+    success = not reasons
+    status = "PASS" if success else "FAIL"
+    log(f"[{case_index}/{total_cases}] {status} {name} -> {artifact_dir}")
+    return CaseResult(name=name, success=success, reasons=reasons, artifact_dir=artifact_dir)
 
 
 def main() -> int:
@@ -153,12 +168,18 @@ def main() -> int:
         print(f"Virtualenv Python not found: {PYTHON_BIN}", file=sys.stderr)
         return 2
 
-    work_root = DEFAULT_WORK_ROOT
-    work_root.mkdir(parents=True, exist_ok=True)
+    output_root = DEFAULT_OUTPUT_ROOT
+    output_root.mkdir(parents=True, exist_ok=True)
     cases = load_cases()
-    results = [run_case(case, work_root=work_root) for case in cases]
+    log(f"Running regression suite: {len(cases)} case(s)")
+    results = [
+        run_case(case, output_root=output_root, case_index=index, total_cases=len(cases))
+        for index, case in enumerate(cases, start=1)
+    ]
 
     failures = [result for result in results if not result.success]
+    log("")
+    log("Summary")
     for result in results:
         status = "PASS" if result.success else "FAIL"
         print(f"[{status}] {result.name} -> {result.artifact_dir}")
