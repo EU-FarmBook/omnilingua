@@ -3,16 +3,23 @@
 Translate born-digital PDFs while preserving layout as much as possible.
 
 This project supports two engines:
-- `html`: `PDF -> HTML -> translate/replace -> PDF`
-- `direct`: direct PDF line translation + rewrite on original PDF coordinates
+- `direct`: the standard production path
+- `html`: advanced/fallback `PDF -> HTML -> translate/replace -> PDF`
 
 ## Features
 
 - CLI workflow for translation and JSON mapping replacement
 - FastAPI endpoint for upload + translated PDF download
 - Auto language detection (or manual `--source-lang`)
+- Validation for the 24 EU language codes
 - Output auto-naming with language suffix when output is a directory
+- Direct-mode scholarly layout hardening:
+  - reusable block extraction
+  - column-aware ordering
+  - conservative scholarly block classification
+  - stronger glyph fallback
 - Modular app structure (`app/api`, `app/services`, `app/pipeline`)
+- Unit and regression test entrypoints
 
 ## Requirements
 
@@ -82,7 +89,7 @@ python cli.py \
   --pdf-out output/
 ```
 
-### 2) HTML engine
+### 2) HTML engine (advanced/fallback)
 
 ```bash
 python cli.py \
@@ -124,36 +131,47 @@ If `--pdf-out` is a directory, output is auto-named as:
 Run server:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload
+bash run.sh
 ```
 
 Health:
 
 ```bash
-curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:9000/health
+curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:15000/health
 ```
 
 Docs:
 
 ```bash
-curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:9000/docs
+curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:15000/docs
 ```
 
-Translate PDF (`direct`):
+Translate PDF (`/translate/pdf`, standard direct path):
 
 ```bash
-curl -X POST "http://localhost:9000/translate/pdf" \
+curl -X POST "http://localhost:15000/translate/pdf" \
+  -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
+  -F "file=@input/document.pdf" \
+  -F "target_lang=es" \
+  -o output/document_es.pdf
+```
+
+Advanced direct translation with image-text enabled:
+
+```bash
+curl -X POST "http://localhost:15000/translate/pdf/advanced" \
   -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
   -F "file=@input/document.pdf" \
   -F "target_lang=es" \
   -F "layout_engine=direct" \
+  -F "translate_image_text=true" \
   -o output/document_es.pdf
 ```
 
-Translate PDF (`html`):
+Advanced HTML translation:
 
 ```bash
-curl -X POST "http://localhost:9000/translate/pdf" \
+curl -X POST "http://localhost:15000/translate/pdf/advanced" \
   -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
   -F "file=@input/document.pdf" \
   -F "target_lang=es" \
@@ -167,7 +185,7 @@ Build and run with Docker:
 
 ```bash
 docker build -t omnilingua .
-docker run --rm -p 9000:9000 --env-file .env omnilingua
+docker run --rm -p 15000:15000 --env-file .env omnilingua
 ```
 
 Build and run with Compose:
@@ -179,7 +197,7 @@ docker compose up --build
 Then call:
 
 ```bash
-curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:9000/health
+curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:15000/health
 ```
 
 Push (if `docker-compose.yml` has service `omnilingua` with an `image:` tag):
@@ -192,7 +210,7 @@ docker compose push omnilingua
 ## Project Structure
 
 ```text
-doc_generator/
+omnilingua/
 ├── app/
 │   ├── main.py
 │   ├── api/
@@ -203,21 +221,47 @@ doc_generator/
 │   │   └── pdf_translate_service.py
 │   └── pipeline/
 │       ├── convert_pdf_to_html.py
+│       ├── extract_native_blocks.py
+│       ├── fonts.py
+│       ├── translate_pdf_image_text.py
 │       ├── replace_html_text.py
 │       ├── pdf_page_size.py
 │       ├── render_html_to_pdf.py
 │       ├── translator_llm.py
 │       └── translate_pdf_direct.py
 ├── cli.py
+├── run.sh
+├── run_tests.sh
+├── run_regression_tests.sh
+├── tests/
 ├── requirements.txt
 ├── ARCHITECTURE.md
 ├── .env.sample
 └── README.md
 ```
 
+## Tests
+
+Run the unit test suite:
+
+```bash
+./run_tests.sh
+```
+
+Run regression translations for the cases listed in `tests/integration_cases.json`:
+
+```bash
+./run_regression_tests.sh
+```
+
+Regression outputs and artifacts are written under `output/regression/`.
+
 ## Notes
 
 - `direct` engine is usually better for complex layouts.
+- `/translate/pdf` is the recommended path and always uses `direct`.
+- `html` remains available only through `/translate/pdf/advanced`.
 - `html` engine can be useful when preserving HTML intermediates is important.
+- `translate_image_text` is experimental and available only through the advanced direct flow.
 - `work/` and `output/` are generated artifacts and should not be committed.
 - Regression test outputs are written under `output/regression/`.
