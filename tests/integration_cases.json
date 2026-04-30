@@ -1,0 +1,58 @@
+[
+  {
+    "name": "fcubed_leaflet_direct_greek",
+    "pdf_in": "input/FCUBED_project_leaflet.pdf",
+    "source_lang": "en",
+    "target_lang": "el",
+    "layout_engine": "direct",
+    "translate_image_text": false,
+    "expect": {
+      "same_page_count": true,
+      "min_text_chars": 2000,
+      "script": "greek",
+      "min_script_chars": 200
+    }
+  },
+  {
+    "name": "cheers_brochure_direct_greek",
+    "pdf_in": "input/Two-years-of-CHEERS_EN.pdf",
+    "source_lang": "en",
+    "target_lang": "el",
+    "layout_engine": "direct",
+    "translate_image_text": false,
+    "expect": {
+      "same_page_count": true,
+      "min_text_chars": 2000,
+      "script": "greek",
+      "min_script_chars": 200
+    }
+  },
+  {
+    "name": "biorefine_direct_greek",
+    "pdf_in": "input/biorefine_ammonia_stripping_and_scrubbing_ugent_wp3_a9.pdf",
+    "source_lang": "en",
+    "target_lang": "el",
+    "layout_engine": "direct",
+    "translate_image_text": false,
+    "expect": {
+      "same_page_count": true,
+      "min_text_chars": 1500,
+      "script": "greek",
+      "min_script_chars": 150
+    }
+  },
+  {
+    "name": "duckweed_direct_greek",
+    "pdf_in": "input/valorisation_of_agricultural_wastewater_streams_by_producing_duckweed.pdf",
+    "source_lang": "en",
+    "target_lang": "el",
+    "layout_engine": "direct",
+    "translate_image_text": false,
+    "expect": {
+      "same_page_count": true,
+      "min_text_chars": 1500,
+      "script": "greek",
+      "min_script_chars": 150
+    }
+  }
+]
