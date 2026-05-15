@@ -60,4 +60,9 @@ def docs() -> object:
 </script>
 """
     body = body.replace("</body>", f"{pdf_accept_script}</body>")
-    return HTMLResponse(body, status_code=response.status_code, headers=dict(response.headers))
+    passthrough_headers = {
+        key: value
+        for key, value in response.headers.items()
+        if key.lower() != "content-length"
+    }
+    return HTMLResponse(body, status_code=response.status_code, headers=passthrough_headers)
