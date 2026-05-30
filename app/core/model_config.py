@@ -50,5 +50,5 @@ def get_vision_model_config() -> ModelEndpointConfig:
             _env_first("VISION_MODEL_URL", "VISION_URL", default="http://localhost:8001/v1")
         ),
         api_key=_env_first("VISION_MODEL_API_KEY", "VISION_API_KEY", default=""),
-        model=_env_first("VISION_MODEL_NAME", "VISION_MODEL", default="internvl3-5-14b"),
+        model=_env_first("VISION_MODEL_NAME", "VISION_MODEL", default="qwen3-vl-30b-a3b-awq"),
     )
