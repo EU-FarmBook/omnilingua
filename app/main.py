@@ -9,9 +9,33 @@ from app.api.routes.translate import router as translate_router
 from app.core.auth import require_basic_auth
 
 
+DESCRIPTION = """
+**Structure-preserving document translation** across the 24 official EU languages.
+
+Use `POST /translate/document` to translate supported files while preserving layout,
+fonts, and formatting as closely as possible.
+
+### Supported file types
+
+- `.pdf`
+- `.txt`
+- `.doc`, `.docx`
+- `.ppt`, `.pptx`
+
+### Translation backend
+
+Use the optional `engine` field to choose `llm`, `deepl`, or `adaptive`. If omitted,
+the server uses its configured default.
+
+- `llm` — self-hosted OpenAI-compatible translation backend.
+- `deepl` — DeepL only.
+- `adaptive` — DeepL first, with automatic fallback to the LLM.
+"""
+
 app = FastAPI(
-    title="Doc Generator API",
+    title="OmniLingua API",
     version="1.0.0",
+    description=DESCRIPTION,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -30,26 +54,20 @@ def openapi_schema() -> JSONResponse:
 def docs() -> object:
     response = get_swagger_ui_html(
         openapi_url="/openapi.json",
-        title="Doc Generator API - Swagger UI",
+        title="OmniLingua API - Swagger UI",
     )
     body = response.body.decode("utf-8")
-    pdf_accept_script = """
+    file_accept_script = """
 <script>
 (() => {
-  const PDF_ACCEPT = '.pdf,application/pdf';
   const DOCUMENT_ACCEPT = '.pdf,.txt,.doc,.docx,.ppt,.pptx,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-powerpoint';
 
   const applyFileAccept = () => {
     document.querySelectorAll('.opblock').forEach((block) => {
       const path = block.querySelector('.opblock-summary-path');
       const input = block.querySelector('input[type="file"]');
-      if (!path || !input) {
-        return;
-      }
-      if (path.textContent === '/translate/document') {
+      if (path?.textContent === '/translate/document' && input) {
         input.setAttribute('accept', DOCUMENT_ACCEPT);
-      } else {
-        input.setAttribute('accept', PDF_ACCEPT);
       }
     });
   };
@@ -59,7 +77,7 @@ def docs() -> object:
 })();
 </script>
 """
-    body = body.replace("</body>", f"{pdf_accept_script}</body>")
+    body = body.replace("</body>", f"{file_accept_script}</body>")
     passthrough_headers = {
         key: value
         for key, value in response.headers.items()

@@ -10,6 +10,12 @@ from app.core.engines import UnsupportedDeepLLanguageError
 class _FakeResult:
     def __init__(self, text: str, detected: str = "EN") -> None:
         self.text = text
+        self.detected_source_lang = detected
+
+
+class _LegacyFakeResult:
+    def __init__(self, text: str, detected: str = "EN") -> None:
+        self.text = text
         self.detected_source_language = detected
 
 
@@ -80,6 +86,15 @@ class DeepLTranslatorTests(unittest.TestCase):
     def test_detect_language_from_api(self) -> None:
         translator = _make_translator()
         self.assertEqual(translator.detect_language(["Some German sentence here."]), "de")
+
+    def test_detect_language_supports_legacy_deepl_attribute(self) -> None:
+        translator = _make_translator()
+        with patch.object(
+            translator.client,
+            "translate_text",
+            return_value=_LegacyFakeResult("[EN-US] Bonjour", detected="FR"),
+        ):
+            self.assertEqual(translator.detect_language(["Bonjour tout le monde."]), "fr")
 
 
 if __name__ == "__main__":

@@ -6,8 +6,9 @@ from pathlib import Path
 
 import fitz
 
+from app.pipeline.block_schema import ExtractedTextBlock, TextStyleHint
 from app.pipeline.fonts import sanitize_text_for_rendering
-from app.pipeline.translate_pdf_direct import _capture_page_links, _restore_page_links
+from app.pipeline.translate_pdf_direct import _capture_page_links, _fit_and_write_block, _restore_page_links
 from app.pipeline.translator_llm import _normalize_detected_language_code, _prepare_language_detection_samples
 
 
@@ -37,6 +38,32 @@ class DirectPipelineHelperTests(unittest.TestCase):
             sanitize_text_for_rendering("“Quoted” ❑"),
             "\"Quoted\" □",
         )
+
+    def test_large_title_redaction_does_not_remove_author_line(self) -> None:
+        doc = fitz.open()
+        try:
+            page = doc.new_page(width=600, height=400)
+            page.insert_textbox(fitz.Rect(72, 80, 520, 170), "ORIGINAL TITLE", fontsize=48)
+            page.insert_text((72, 220), "AUTHOR LINE", fontsize=24)
+            block = ExtractedTextBlock(
+                block_id=1,
+                page_index=0,
+                bbox=(72, 80, 520, 170),
+                text="ORIGINAL TITLE",
+                source="native",
+                kind="title",
+                confidence=1.0,
+                style=TextStyleHint(font_name="helv", font_size=48.0, color_rgb=(0, 0, 0)),
+                line_count=2,
+            )
+
+            _fit_and_write_block(page, block, "TRANSLATED TITLE")
+
+            text = page.get_text()
+            self.assertIn("AUTHOR LINE", text)
+            self.assertNotIn("ORIGINAL TITLE", text)
+        finally:
+            doc.close()
 
     def test_capture_and_restore_page_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

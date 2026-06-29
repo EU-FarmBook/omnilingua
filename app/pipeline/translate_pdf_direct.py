@@ -28,6 +28,11 @@ class DirectTranslationStats:
     blocks_rejected: int
     api_calls: int
     source_lang: str
+    # Layout-fit accounting (subset of blocks_translated): a translation that did not
+    # fit its box was either truncated with an ellipsis ("truncated") or could not be
+    # placed at all after the source was redacted ("dropped" = silent content loss).
+    blocks_truncated: int = 0
+    blocks_dropped: int = 0
     image_regions_processed: int = 0
     image_blocks_translated: int = 0
     image_blocks_rejected: int = 0
@@ -71,33 +76,51 @@ def _restore_page_links(page: fitz.Page, links: list[dict]) -> None:
             continue
 
 
-def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated: str) -> bool:
+def _is_display_block(block: ExtractedTextBlock) -> bool:
+    return block.kind == "title" or block.style.font_size >= 36.0
+
+
+def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated: str) -> str:
+    """Render ``translated`` into ``block``'s box.
+
+    Returns one of: ``"fit"`` (placed in full), ``"truncated"`` (placed but clipped
+    with an ellipsis — text lost), ``"dropped"`` (source redacted but nothing could be
+    placed — total content loss), or ``"skipped"`` (degenerate/empty box, source left
+    untouched).
+    """
     rect = fitz.Rect(*block.bbox)
     if rect.width < 3 or rect.height < 3:
-        return False
+        return "skipped"
 
     text = re.sub(r"\s*\n+\s*", " ", translated).strip()
     if not text:
-        return False
+        return "skipped"
 
-    if block.kind in {"title", "abstract"}:
+    display_block = _is_display_block(block)
+    if display_block:
+        extra_width = 0.0
+        min_h = rect.height
+    elif block.kind in {"abstract"}:
         height_factor = max(2.8, 1.1 + (block.line_count * 1.1))
         extra_width = min(20.0, max(0.0, block.style.font_size * 1.1))
+        min_h = max(rect.height, block.style.font_size * height_factor)
     elif block.kind in {"caption", "reference", "table"}:
         height_factor = max(1.8, 0.95 + (block.line_count * 0.95))
         extra_width = min(6.0, max(0.0, block.style.font_size * 0.25))
+        min_h = max(rect.height, block.style.font_size * height_factor)
     elif block.kind == "paragraph":
         height_factor = max(2.4, 1.15 + (block.line_count * 1.02))
         extra_width = min(14.0, max(0.0, block.style.font_size * 0.75))
+        min_h = max(rect.height, block.style.font_size * height_factor)
     else:
         height_factor = max(1.45, 0.9 + (block.line_count * 0.7))
         extra_width = min(10.0, max(0.0, block.style.font_size * 0.5))
+        min_h = max(rect.height, block.style.font_size * height_factor)
 
-    if block.column_index is not None:
+    if block.column_index is not None and not display_block:
         extra_width = min(extra_width, 6.0)
-        height_factor *= 1.18
+        min_h *= 1.18
 
-    min_h = max(rect.height, block.style.font_size * height_factor)
     max_x1 = min(page.rect.x1 - 2.0, rect.x1 + extra_width)
     rect = fitz.Rect(rect.x0, rect.y0, max_x1, rect.y0 + min_h)
 
@@ -110,9 +133,9 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
     )
 
     fontname, fontfile, render_text = resolve_font_for_text(page, block.style, text)
-    if block.kind == "title":
-        size = max(8.0, min(block.style.font_size, 32.0))
-        line_height = 1.1
+    if display_block:
+        size = max(8.0, block.style.font_size)
+        line_height = 1.05 if block.kind == "title" else 1.08
     elif block.kind in {"caption", "reference", "table"}:
         size = max(6.0, min(block.style.font_size, 18.0))
         line_height = 1.06
@@ -136,7 +159,7 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
             overlay=True,
         )
         if spare >= -0.5:
-            return True
+            return "fit"
         size *= 0.92
 
     # Last fallback to avoid complete miss.
@@ -152,7 +175,18 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
         lineheight=1.08,
         overlay=True,
     )
-    return spare >= -3.0
+    snippet = text[:60] + ("…" if len(text) > 60 else "")
+    if spare >= -3.0:
+        print(
+            f"⚠️  block {block.block_id} ({block.kind}) p{block.page_index + 1}: "
+            f"translation too long for its box — TRUNCATED to fit (text lost): {snippet!r}"
+        )
+        return "truncated"
+    print(
+        f"⚠️  block {block.block_id} ({block.kind}) p{block.page_index + 1}: "
+        f"translation could not be placed after redaction — DROPPED (content lost): {snippet!r}"
+    )
+    return "dropped"
 
 
 def translate_pdf_direct(
@@ -214,13 +248,20 @@ def translate_pdf_direct(
     image_stats = None
     try:
         translated_count = 0
+        truncated_count = 0
+        dropped_count = 0
         for block in blocks:
             translated = translated_map.get(block.block_id)
             if not translated:
                 continue
             page = doc[block.page_index]
-            if _fit_and_write_block(page, block, translated):
+            status = _fit_and_write_block(page, block, translated)
+            if status in ("fit", "truncated"):
                 translated_count += 1
+            if status == "truncated":
+                truncated_count += 1
+            elif status == "dropped":
+                dropped_count += 1
         if translate_image_text:
             print("Translating text embedded in images...")
             image_stats = translate_pdf_image_text(
@@ -237,6 +278,11 @@ def translate_pdf_direct(
         doc.close()
 
     print(f"Retried suspicious lines: {retried} (rejected: {rejected})")
+    if truncated_count or dropped_count:
+        print(
+            f"⚠️  Layout fit: {truncated_count} block(s) truncated, "
+            f"{dropped_count} block(s) dropped (translation longer than the original box)."
+        )
     total = len(blocks)
     return DirectTranslationStats(
         blocks_total=total,
@@ -246,6 +292,8 @@ def translate_pdf_direct(
         blocks_rejected=rejected,
         api_calls=api_calls,
         source_lang=source_lang,
+        blocks_truncated=truncated_count,
+        blocks_dropped=dropped_count,
         image_regions_processed=image_stats.image_regions_processed if image_stats else 0,
         image_blocks_translated=image_stats.image_blocks_translated if image_stats else 0,
         image_blocks_rejected=image_stats.image_blocks_rejected if image_stats else 0,

@@ -225,6 +225,11 @@ def main() -> int:
             f"Blocks translated: {stats.blocks_translated}/{stats.blocks_total} "
             f"(skipped: {stats.blocks_skipped}, retried: {stats.blocks_retried}, rejected: {stats.blocks_rejected})"
         )
+        if stats.blocks_truncated or stats.blocks_dropped:
+            print(
+                f"Layout fit warnings: {stats.blocks_truncated} truncated, "
+                f"{stats.blocks_dropped} dropped (translation longer than original box)"
+            )
         print(f"API calls made:  {stats.api_calls}")
         if args.translate_image_text:
             print(

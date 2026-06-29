@@ -32,6 +32,16 @@ def _int_color_to_rgb(color: int) -> tuple[float, float, float]:
     return (r, g, b)
 
 
+def _style_span_for_line(spans: list[dict]) -> dict:
+    return max(
+        spans,
+        key=lambda span: (
+            len(str(span.get("text", "")).strip()),
+            float(span.get("size", 0) or 0),
+        ),
+    )
+
+
 def _merge_bbox(
     left: tuple[float, float, float, float],
     right: tuple[float, float, float, float],
@@ -213,7 +223,11 @@ def _classify_scholarly_kind(
         return "reference"
     if lower.startswith("fig.") or lower.startswith("figure ") or lower.startswith("table "):
         return "caption"
-    if page_top < 120 and font_size >= 14 and block_width >= page_width * 0.45:
+    poster_title_band_bottom = max(120.0, page_width * 0.18)
+    if block_width >= page_width * 0.45 and (
+        (page_top < 120 and font_size >= 14)
+        or (page_top < poster_title_band_bottom and font_size >= 36)
+    ):
         return "title"
 
     if line_count > 1:
@@ -247,6 +261,12 @@ def _is_wide_block(block: ExtractedTextBlock, page_width: float) -> bool:
     return (block.bbox[2] - block.bbox[0]) >= page_width * 0.6
 
 
+def _is_header_band_block(block: ExtractedTextBlock, page_width: float) -> bool:
+    block_width = block.bbox[2] - block.bbox[0]
+    header_bottom = max(120.0, page_width * 0.28)
+    return block.bbox[1] < header_bottom and block_width >= page_width * 0.4
+
+
 def _detect_multicolumn_page(page_lines: List[ExtractedTextBlock], page_width: float) -> bool:
     if len(page_lines) < 16:
         return False
@@ -277,7 +297,7 @@ def _with_column_metadata(
     midpoint = page_width / 2.0
     result: List[ExtractedTextBlock] = []
     for block in page_lines:
-        if _is_wide_block(block, page_width):
+        if _is_wide_block(block, page_width) or _is_header_band_block(block, page_width):
             result.append(block)
             continue
         center_x = (block.bbox[0] + block.bbox[2]) / 2.0
@@ -433,10 +453,10 @@ def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
                     if not bbox_raw or len(bbox_raw) != 4:
                         continue
 
-                    first_span = spans[0]
-                    font_name = str(first_span.get("font", "helv"))
-                    font_size = float(first_span.get("size", 11.0))
-                    color_rgb = _int_color_to_rgb(int(first_span.get("color", 0)))
+                    style_span = _style_span_for_line(spans)
+                    font_name = str(style_span.get("font", "helv"))
+                    font_size = float(style_span.get("size", 11.0))
+                    color_rgb = _int_color_to_rgb(int(style_span.get("color", 0)))
 
                     page_line_blocks.append(
                         ExtractedTextBlock(

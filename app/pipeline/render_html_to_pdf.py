@@ -18,14 +18,18 @@ def pt_to_in(pt: float) -> float:
     return pt / 72.0
 
 
-async def _fit_overflowing_absolute_text(page) -> int:
+async def _fit_overflowing_absolute_text(page) -> dict:
     """
     Shrink overflowing absolute text boxes instead of letting them wrap and overlap.
-    Returns number of adjusted elements.
+
+    Returns ``{"adjusted": n, "overflowing": m}`` where ``overflowing`` counts boxes
+    that STILL exceed their available width after the font-shrink + horizontal-squeeze
+    floor — i.e. text that ``overflow: hidden`` will silently clip.
     """
     return await page.evaluate(
         """() => {
         let adjusted = 0;
+        let overflowing = 0;
         const pages = Array.from(document.querySelectorAll('div[id^="page"][id$="-div"]'));
 
         for (const pageDiv of pages) {
@@ -67,11 +71,17 @@ async def _fit_overflowing_absolute_text(page) -> int:
                     }
                 }
 
+                // After the 0.72 font floor and 0.85 squeeze floor, anything still wider
+                // than its box will be clipped by overflow:hidden (silent text loss).
+                if (node.scrollWidth * 0.85 > maxWidth + 1) {
+                    overflowing += 1;
+                }
+
                 adjusted += 1;
             }
         }
 
-        return adjusted;
+        return { adjusted, overflowing };
     }"""
     )
 
@@ -215,8 +225,15 @@ async def _render_with_chromium(
             )
 
         if adjust_text_overflow:
-            adjusted = await _fit_overflowing_absolute_text(page)
+            fit_result = await _fit_overflowing_absolute_text(page)
+            adjusted = fit_result.get("adjusted", 0)
+            overflowing = fit_result.get("overflowing", 0)
             print(f"  Overflow text boxes adjusted: {adjusted}")
+            if overflowing:
+                print(
+                    f"  ⚠️  {overflowing} text box(es) still overflow after shrink/squeeze — "
+                    f"clipped by overflow:hidden (text lost; translation longer than original box)."
+                )
 
         # Use print media rules consistently
         await page.emulate_media(media="print")

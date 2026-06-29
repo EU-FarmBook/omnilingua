@@ -53,7 +53,11 @@ def pick_base_font(font_name: str) -> str:
 def needs_unicode_font(text: str) -> bool:
     for ch in text:
         cp = ord(ch)
-        if cp > 0x024F:
+        # Base-14 Helvetica is limited to WinAnsi (Latin-1). Anything above U+00FF
+        # — Latin Extended-A/B (Polish, Czech, Hungarian, Romanian, Baltic, Maltese,
+        # …), Greek, Cyrillic — must use the Unicode fallback font or it renders as
+        # notdef (".notdef" / "?") boxes.
+        if cp > 0x00FF:
             return True
         if ch in {"“", "”", "„", "‟", "’", "‘", "↑", "↓", "←", "→", "↔", "•", "▪", "❑", "✓", "✔"}:
             return True

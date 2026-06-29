@@ -206,10 +206,10 @@ Docs:
 curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:15000/docs
 ```
 
-Translate PDF (`/translate/pdf`, standard direct path):
+Translate a supported document (`/translate/document`):
 
 ```bash
-curl -X POST "http://localhost:15000/translate/pdf" \
+curl -X POST "http://localhost:15000/translate/document" \
   -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
   -F "file=@input/document.pdf" \
   -F "target_lang=es" \
@@ -217,42 +217,43 @@ curl -X POST "http://localhost:15000/translate/pdf" \
   -o output/document_es.pdf
 ```
 
-All translation endpoints (`/translate/pdf`, `/translate/document`,
-`/translate/pdf/advanced`) accept an optional `engine` field (`llm` | `deepl` | `adaptive`);
-omit it to use the `TRANSLATION_ENGINE` server default.
+The public API exposes a single translation endpoint. It currently supports
+`.pdf`, `.txt`, `.doc`, `.docx`, `.ppt`, and `.pptx`. The optional `engine` field
+accepts `llm`, `deepl`, or `adaptive`; omit it to use the `TRANSLATION_ENGINE`
+server default.
 
-Advanced direct translation with image-text enabled:
+The legacy `/translate/pdf` and `/translate/pdf/advanced` routes are hidden from
+OpenAPI and kept only as compatibility/internal routes during migration.
 
-```bash
-curl -X POST "http://localhost:15000/translate/pdf/advanced" \
-  -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
-  -F "file=@input/document.pdf" \
-  -F "target_lang=es" \
-  -F "layout_engine=direct" \
-  -F "translate_image_text=true" \
-  -o output/document_es.pdf
-```
+## Testing
 
-Advanced HTML translation:
+See [TESTING.md](./TESTING.md) for the fast unit suite, regression suite, and full EU translation matrix commands.
+
+## Bulk EU Translation Matrix
+
+To translate every supported file in `input/` into all 24 EU languages, run:
 
 ```bash
-curl -X POST "http://localhost:15000/translate/pdf/advanced" \
-  -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
-  -F "file=@input/document.pdf" \
-  -F "target_lang=es" \
-  -F "layout_engine=html" \
-  -o output/document_es_html.pdf
+./run_all_eu_translations.sh
 ```
 
-Translate a supported document (`/translate/document`):
+Outputs are written under `output/eu_translations/<lang>/`, with per-job logs in
+`output/eu_translations/_logs/` and a machine-readable manifest at
+`output/eu_translations/manifest.json`. The runner prints the resolved engine,
+start/finish timestamps, and per-translation duration; the manifest stores the
+same timing fields. By default the script assumes the input files are English and
+copies the `en` artifact so each input has a 24-language output set.
+
+Useful overrides:
 
 ```bash
-curl -X POST "http://localhost:15000/translate/document" \
-  -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
-  -F "file=@input/document.docx" \
-  -F "target_lang=es" \
-  -o output/document_es.docx
+ENGINE=adaptive ./run_all_eu_translations.sh
+OVERWRITE=1 ./run_all_eu_translations.sh
+INPUT_DIR=/path/to/input OUTPUT_DIR=/path/to/output ./run_all_eu_translations.sh
 ```
+
+The runner intentionally uses the same CLI pipeline as the application. It is a
+long-running integration utility, not part of the normal unit test script.
 
 ## Docker
 
@@ -364,11 +365,9 @@ The safest long-term approach for structured formats is to extract translatable 
 
 ## Notes
 
-- `direct` engine is usually better for complex layouts.
-- `/translate/pdf` is the recommended path and always uses `direct`.
-- `/translate/document` supports `.pdf`, `.txt`, `.doc`, `.docx`, `.ppt`, and `.pptx`.
-- `html` remains available only through `/translate/pdf/advanced`.
-- `html` engine can be useful when preserving HTML intermediates is important.
-- `translate_image_text` is experimental and available only through the advanced direct flow.
+- `/translate/document` is the public translation endpoint.
+- It currently supports `.pdf`, `.txt`, `.doc`, `.docx`, `.ppt`, and `.pptx`.
+- PDF-specific routes are hidden compatibility/internal routes, not intended for end users.
+- Structured formats such as `.json`, `.csv`, `.xls`, and `.xlsx` need dedicated extraction/rebuild support before they should be accepted.
 - `work/` and `output/` are generated artifacts and should not be committed.
 - Regression test outputs are written under `output/regression/`.

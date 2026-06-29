@@ -8,10 +8,12 @@ WORKDIR /app
 
 # System dependencies:
 # - poppler-utils: pdftohtml/pdfinfo/pdftotext (html engine)
-# - fonts-dejavu-core: Unicode glyph fallback (direct engine for Greek/Cyrillic/etc.)
+# - fonts-dejavu-core: Unicode glyph fallback (direct engine: Latin Extended/Greek/Cyrillic)
+# - fonts-noto-core: broader script coverage for the Chromium (html engine) fallback
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     fonts-dejavu-core \
+    fonts-noto-core \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

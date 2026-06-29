@@ -77,7 +77,12 @@ class DeepLTranslator:
             return "en"
 
         result = self.client.translate_text(samples[0][:200], target_lang="EN-US")
-        detected = normalize_language_code(result.detected_source_language or "")
+        detected_source = getattr(
+            result,
+            "detected_source_lang",
+            getattr(result, "detected_source_language", ""),
+        )
+        detected = normalize_language_code(detected_source or "")
         return detected if detected in SUPPORTED_EU_LANGUAGE_CODES else "en"
 
     def translate_single_strict(

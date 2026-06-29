@@ -7,6 +7,7 @@ from app.pipeline.extract_native_blocks import (
     _can_merge_lines,
     _classify_scholarly_kind,
     _detect_multicolumn_page,
+    _style_span_for_line,
     collect_language_detection_samples,
     _sort_page_lines,
     _with_column_metadata,
@@ -64,6 +65,17 @@ class ExtractNativeBlocksTests(unittest.TestCase):
         )
         self.assertEqual(
             _classify_scholarly_kind(
+                "VALORISATION OF AGRICULTURAL WASTEWATER STREAMS BY PRODUCING DUCKWEED",
+                2,
+                page_top=196,
+                font_size=96,
+                page_width=2384,
+                block_width=2093,
+            ),
+            "title",
+        )
+        self.assertEqual(
+            _classify_scholarly_kind(
                 "0.001 mg kg−1   98   12",
                 1,
                 page_top=300,
@@ -74,6 +86,17 @@ class ExtractNativeBlocksTests(unittest.TestCase):
             "table",
         )
 
+    def test_style_span_ignores_short_superscript_prefix(self) -> None:
+        span = _style_span_for_line(
+            [
+                {"text": "1", "size": 21.0, "font": "Small"},
+                {"text": " University affiliation", "size": 32.0, "font": "Normal"},
+            ]
+        )
+
+        self.assertEqual(span["font"], "Normal")
+        self.assertEqual(span["size"], 32.0)
+
     def test_detects_multicolumn_page(self) -> None:
         blocks = []
         for idx in range(8):
@@ -82,6 +105,18 @@ class ExtractNativeBlocksTests(unittest.TestCase):
             blocks.append(_block(idx, 320, 100 + (idx - 8) * 20, 490, 112 + (idx - 8) * 20, f"R{idx}"))
 
         self.assertTrue(_detect_multicolumn_page(blocks, 550.0))
+
+    def test_centered_header_band_block_stays_full_width(self) -> None:
+        page_width = 1000.0
+        header = _block(0, 280, 180, 720, 210, "2 Centered affiliation line")
+        left = _block(1, 80, 360, 320, 380, "Left body")
+        right = _block(2, 620, 360, 860, 380, "Right body")
+
+        with_columns = _with_column_metadata([header, left, right], page_width, multi_column=True)
+
+        self.assertIsNone(with_columns[0].column_index)
+        self.assertEqual(with_columns[1].column_index, 0)
+        self.assertEqual(with_columns[2].column_index, 1)
 
     def test_sorts_multicolumn_page_left_then_right_after_full_width_top(self) -> None:
         page_width = 550.0

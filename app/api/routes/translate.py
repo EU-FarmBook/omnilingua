@@ -29,7 +29,10 @@ CommonFile = Annotated[
 DocumentFile = Annotated[
     UploadFile,
     File(
-        description="Supported document file to translate (.pdf, .txt, .doc, .docx, .ppt, .pptx).",
+        description=(
+            "Document file to translate. Currently supported: "
+            ".pdf, .txt, .doc, .docx, .ppt, .pptx."
+        ),
     ),
 ]
 CommonTargetLang = Annotated[
@@ -89,7 +92,12 @@ AdvancedTranslateImageText = Annotated[
 @router.post(
     "/translate/pdf",
     summary="Translate a PDF",
-    description="Common translation endpoint. Uses the recommended direct engine automatically.",
+    description=(
+        "Deprecated compatibility alias for PDF-only clients. "
+        "Use /translate/document for new integrations."
+    ),
+    deprecated=True,
+    include_in_schema=False,
     openapi_extra={
         "requestBody": {
             "content": {
@@ -130,7 +138,10 @@ async def translate_pdf(
 @router.post(
     "/translate/document",
     summary="Translate a document",
-    description="Translate a supported document file. Supports .pdf, .txt, .doc, .docx, .ppt, and .pptx.",
+    description=(
+        "Single public translation endpoint. Currently supports .pdf, .txt, .doc, "
+        ".docx, .ppt, and .pptx."
+    ),
 )
 async def translate_document(
     background_tasks: BackgroundTasks,
@@ -156,7 +167,12 @@ async def translate_document(
 @router.post(
     "/translate/pdf/advanced",
     summary="Translate or replace PDF text (advanced)",
-    description="Advanced endpoint for choosing html/direct mode, saving intermediate HTML, or using mapping_json exact replacements instead of translation.",
+    description=(
+        "Deprecated internal/debug endpoint for PDF experiments. "
+        "Use /translate/document for normal translation."
+    ),
+    deprecated=True,
+    include_in_schema=False,
     openapi_extra={
         "requestBody": {
             "content": {
