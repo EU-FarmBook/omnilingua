@@ -509,7 +509,8 @@ def translate_html_content(
     html_in: Path,
     html_out: Path,
     target_lang: str,
-    source_lang: Optional[str] = None
+    source_lang: Optional[str] = None,
+    engine: Optional[str] = None,
 ) -> TranslationStats:
     """
     Main entry point: Translate HTML content using LLM.
@@ -531,8 +532,11 @@ def translate_html_content(
     # Show stats
     total_chars = sum(len(n.original_text) for n in nodes)
     print(f"  Total chars: {total_chars}")
-    
-    translator = LLMTranslator()
+
+    # Lazy import avoids a circular dependency (factory imports this module).
+    from app.pipeline.translator_factory import get_translator
+
+    translator = get_translator(engine)
     
     # Detect source language
     if source_lang is None:

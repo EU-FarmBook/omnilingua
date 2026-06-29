@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
+from app.pipeline.translator_factory import get_translator
 from app.pipeline.translator_llm import LLMTranslator, should_retry_translation
 
 
@@ -33,8 +34,9 @@ def translate_segments(
     *,
     target_lang: str,
     source_lang: Optional[str] = None,
+    engine: Optional[str] = None,
 ) -> tuple[List[str], SegmentTranslationStats]:
-    translator = LLMTranslator()
+    translator = get_translator(engine)
     resolved_source = detect_source_language_for_segments(
         translator,
         segments,

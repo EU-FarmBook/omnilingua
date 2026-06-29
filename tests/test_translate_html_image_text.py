@@ -28,12 +28,12 @@ class TranslateHtmlImageTextTests(unittest.TestCase):
             )
 
             with patch("app.pipeline.translate_html_image_text.VisionLLMClient") as vision_cls, patch(
-                "app.pipeline.translate_html_image_text.LLMTranslator"
-            ) as translator_cls:
+                "app.pipeline.translate_html_image_text.get_translator"
+            ) as get_translator:
                 vision_cls.return_value.extract_figure_text_blocks.return_value = [
                     VisionTextBlock(text="Filter System 1", bbox_norm=(100, 200, 300, 260))
                 ]
-                translator = translator_cls.return_value
+                translator = get_translator.return_value
                 translator.translate_single_strict.return_value = "Σύστημα φίλτρου 1"
 
                 translated = translate_html_image_text(
@@ -53,8 +53,8 @@ class TranslateHtmlImageTextTests(unittest.TestCase):
             html_path.write_text("<html><body></body></html>", encoding="utf-8")
 
             with patch("app.pipeline.translate_html_image_text.VisionLLMClient") as vision_cls, patch(
-                "app.pipeline.translate_html_image_text.LLMTranslator"
-            ) as translator_cls:
+                "app.pipeline.translate_html_image_text.get_translator"
+            ) as get_translator:
                 translated = translate_html_image_text(
                     html_path,
                     target_lang="en",
@@ -63,7 +63,7 @@ class TranslateHtmlImageTextTests(unittest.TestCase):
 
             self.assertEqual(translated, 0)
             vision_cls.assert_not_called()
-            translator_cls.assert_not_called()
+            get_translator.assert_not_called()
 
 
 if __name__ == "__main__":

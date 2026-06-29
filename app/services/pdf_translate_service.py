@@ -9,7 +9,8 @@ from typing import Literal, Optional
 
 from fastapi import HTTPException, UploadFile
 
-from app.core.languages import validate_optional_language_code
+from app.core.engines import is_deepl_supported, validate_engine
+from app.core.languages import EU_LANGUAGE_NAMES, validate_optional_language_code
 from app.pipeline.convert_pdf_to_html import convert_pdf_to_html
 from app.pipeline.pdf_page_size import get_first_page_size
 from app.pipeline.playwright_support import ensure_chromium_installed_async
@@ -51,7 +52,8 @@ def validate_request(
     source_lang: Optional[str],
     layout_engine: LayoutEngine,
     mapping_json: Optional[str],
-) -> tuple[Optional[str], Optional[str]]:
+    engine: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str], str]:
     target_lang = normalize_optional_text(target_lang)
     source_lang = normalize_optional_text(source_lang)
     mapping_json = normalize_optional_text(mapping_json)
@@ -67,6 +69,7 @@ def validate_request(
         )
 
     try:
+        normalized_engine = validate_engine(engine)
         normalized_target = validate_optional_language_code(target_lang, "target_lang")
         normalized_source = validate_optional_language_code(source_lang, "source_lang")
     except ValueError as exc:
@@ -78,7 +81,21 @@ def validate_request(
             detail="source_lang and target_lang must be different when both are provided",
         )
 
-    return (normalized_target, normalized_source)
+    if (
+        normalized_engine == "deepl"
+        and normalized_target
+        and not is_deepl_supported(normalized_target)
+    ):
+        name = EU_LANGUAGE_NAMES.get(normalized_target, normalized_target)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"DeepL does not support translation into {name} ('{normalized_target}'). "
+                f"Use engine 'llm' or 'adaptive' for this language."
+            ),
+        )
+
+    return (normalized_target, normalized_source, normalized_engine)
 
 
 async def run_translation(
@@ -89,13 +106,15 @@ async def run_translation(
     save_html: bool,
     mapping_json: Optional[str],
     translate_image_text: bool = False,
+    engine: Optional[str] = None,
 ) -> TranslationResult:
-    target_lang, source_lang = validate_request(
+    target_lang, source_lang, engine = validate_request(
         file.filename,
         target_lang,
         source_lang,
         layout_engine,
         mapping_json,
+        engine,
     )
     mapping_json = normalize_optional_text(mapping_json)
 
@@ -119,6 +138,7 @@ async def run_translation(
                 target_lang=target_lang or "",
                 source_lang=source_lang,
                 translate_image_text=translate_image_text,
+                engine=engine,
             )
             return TranslationResult(tmp_root=tmp_root, output_pdf=out_pdf)
 
@@ -138,6 +158,7 @@ async def run_translation(
                 html_translated,
                 target_lang=target_lang,
                 source_lang=source_lang,
+                engine=engine,
             )
             html_for_pdf = html_translated
         elif mapping_json:

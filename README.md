@@ -8,11 +8,13 @@ This project supports:
 - two PDF engines:
   - `direct`: the standard production path
   - `html`: advanced/fallback `PDF -> HTML -> translate/replace -> PDF`
+- three translation backends (`llm`, `deepl`, `adaptive`) — see [Translation engines](#translation-engines)
 
 ## Features
 
 - CLI workflow for translation and JSON mapping replacement
 - FastAPI endpoints for translated PDF/document download
+- Selectable translation backend: LLM, DeepL, or adaptive (DeepL with LLM fallback)
 - Auto language detection (or manual `--source-lang`)
 - Validation for the 24 EU language codes
 - Output auto-naming with language suffix when output is a directory
@@ -73,12 +75,44 @@ COMBINE_NUM_PREDICT=
 PER_REQUEST_TIMEOUT=
 BASIC_AUTH_USERNAME=
 BASIC_AUTH_PASSWORD=
+
+# Translation engine: llm (default) | deepl | adaptive
+TRANSLATION_ENGINE=
+# Required for the deepl and adaptive engines:
+DEEPL_API_KEY=
+DEEPL_SERVER_URL=
+DEEPL_EN_VARIANT=
+DEEPL_PT_VARIANT=
 ```
 
 Legacy names are still accepted as fallbacks for backward compatibility:
 
 - text model: `TEXT_URL`, `TEXT_API_KEY`, `TEXT_MODEL`, `RUNPOD_VLLM_HOST`, `VLLM_API_KEY`, `VLLM_MODEL`
 - vision model: `VISION_URL`, `VISION_API_KEY`, `VISION_MODEL`
+- DeepL: `DEEPL_AUTH_KEY` (for `DEEPL_API_KEY`), `DEEPL_API_URL` (for `DEEPL_SERVER_URL`)
+
+## Translation engines
+
+Translation can be performed by one of three engines, selected per request via the
+`engine` parameter (API) / `--engine` flag (CLI), or globally via the
+`TRANSLATION_ENGINE` env var. When unset, the default is `llm`.
+
+| Engine | Behavior |
+| --- | --- |
+| `llm` | LLM only (OpenAI-compatible / vLLM endpoint). The original behavior. |
+| `deepl` | DeepL only. Errors (quota, rate limit, auth) are surfaced, not hidden. |
+| `adaptive` | DeepL first; on **any** DeepL error fall back to the LLM. Once DeepL reports a service failure (quota/rate/auth) it is skipped for the rest of the run. |
+
+Notes:
+
+- The engine controls the **text translation** step. Text embedded in images is always
+  OCR'd by the vision LLM (DeepL cannot OCR); the translate-after-OCR step then honors the
+  selected engine.
+- DeepL does not support all 24 EU languages — **Maltese (`mt`)** and **Irish (`ga`)** are
+  not available. In `deepl` mode these targets return a hard error; in `adaptive` mode they
+  fall back to the LLM.
+- DeepL requires a regional variant for English and Portuguese targets; defaults are
+  `EN-GB` / `PT-PT`, configurable via `DEEPL_EN_VARIANT` / `DEEPL_PT_VARIANT`.
 
 ## CLI Usage
 
@@ -90,8 +124,13 @@ python cli.py \
   --workdir ./work \
   --target-lang es \
   --layout-engine direct \
+  --engine adaptive \
   --pdf-out output/
 ```
+
+`--engine` selects the translation backend (`llm` | `deepl` | `adaptive`) and applies to
+all input types; it is independent of `--layout-engine`. Omit it to use the
+`TRANSLATION_ENGINE` env default (`llm`).
 
 ### 2) HTML engine (advanced/fallback)
 
@@ -174,8 +213,13 @@ curl -X POST "http://localhost:15000/translate/pdf" \
   -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" \
   -F "file=@input/document.pdf" \
   -F "target_lang=es" \
+  -F "engine=adaptive" \
   -o output/document_es.pdf
 ```
+
+All translation endpoints (`/translate/pdf`, `/translate/document`,
+`/translate/pdf/advanced`) accept an optional `engine` field (`llm` | `deepl` | `adaptive`);
+omit it to use the `TRANSLATION_ENGINE` server default.
 
 Advanced direct translation with image-text enabled:
 

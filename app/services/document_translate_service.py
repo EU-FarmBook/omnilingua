@@ -9,7 +9,8 @@ from typing import Optional
 
 from fastapi import HTTPException, UploadFile
 
-from app.core.languages import validate_optional_language_code
+from app.core.engines import is_deepl_supported, validate_engine
+from app.core.languages import EU_LANGUAGE_NAMES, validate_optional_language_code
 from app.pipeline.convert_legacy_office import convert_legacy_office_document
 from app.pipeline.translate_docx import translate_docx
 from app.pipeline.translate_pdf_direct import translate_pdf_direct
@@ -54,7 +55,8 @@ def validate_document_request(
     filename: str | None,
     target_lang: Optional[str],
     source_lang: Optional[str],
-) -> tuple[str, Optional[str], Optional[str]]:
+    engine: Optional[str] = None,
+) -> tuple[str, str, Optional[str], str]:
     target_lang = normalize_optional_text(target_lang)
     source_lang = normalize_optional_text(source_lang)
 
@@ -74,6 +76,7 @@ def validate_document_request(
         raise HTTPException(status_code=400, detail="target_lang is required")
 
     try:
+        normalized_engine = validate_engine(engine)
         normalized_target = validate_optional_language_code(target_lang, "target_lang")
         normalized_source = validate_optional_language_code(source_lang, "source_lang")
     except ValueError as exc:
@@ -85,7 +88,21 @@ def validate_document_request(
             detail="source_lang and target_lang must be different when both are provided",
         )
 
-    return (suffix, normalized_target or "", normalized_source)
+    if (
+        normalized_engine == "deepl"
+        and normalized_target
+        and not is_deepl_supported(normalized_target)
+    ):
+        name = EU_LANGUAGE_NAMES.get(normalized_target, normalized_target)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"DeepL does not support translation into {name} ('{normalized_target}'). "
+                f"Use engine 'llm' or 'adaptive' for this language."
+            ),
+        )
+
+    return (suffix, normalized_target or "", normalized_source, normalized_engine)
 
 
 async def run_document_translation(
@@ -93,11 +110,13 @@ async def run_document_translation(
     *,
     target_lang: Optional[str],
     source_lang: Optional[str],
+    engine: Optional[str] = None,
 ) -> DocumentTranslationResult:
-    suffix, target_lang, source_lang = validate_document_request(
+    suffix, target_lang, source_lang, engine = validate_document_request(
         file.filename,
         target_lang,
         source_lang,
+        engine,
     )
 
     tmp_root = tempfile.mkdtemp(prefix="omnilingua_document_api_")
@@ -133,6 +152,7 @@ async def run_document_translation(
                 target_lang=target_lang,
                 source_lang=source_lang,
                 translate_image_text=False,
+                engine=engine,
             )
         elif actual_suffix == ".txt":
             translate_txt(
@@ -140,6 +160,7 @@ async def run_document_translation(
                 out_path,
                 target_lang=target_lang,
                 source_lang=source_lang,
+                engine=engine,
             )
         elif actual_suffix == ".docx":
             translate_docx(
@@ -147,6 +168,7 @@ async def run_document_translation(
                 out_path,
                 target_lang=target_lang,
                 source_lang=source_lang,
+                engine=engine,
             )
         elif actual_suffix == ".pptx":
             translate_pptx(
@@ -154,6 +176,7 @@ async def run_document_translation(
                 out_path,
                 target_lang=target_lang,
                 source_lang=source_lang,
+                engine=engine,
             )
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {actual_suffix}")

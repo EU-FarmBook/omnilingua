@@ -7,7 +7,8 @@ from typing import Optional
 
 from bs4 import BeautifulSoup, Tag
 
-from app.pipeline.translator_llm import LLMTranslator, should_retry_translation
+from app.pipeline.translator_factory import get_translator
+from app.pipeline.translator_llm import should_retry_translation
 from app.pipeline.vision_llm import VisionLLMClient, VisionTextBlock
 
 
@@ -35,7 +36,7 @@ def _normalized_to_page_bbox(
 
 
 def _translated_block_text(
-    translator: LLMTranslator,
+    translator,
     source_text: str,
     source_lang: str,
     target_lang: str,
@@ -84,13 +85,14 @@ def translate_html_image_text(
     *,
     target_lang: str,
     source_lang: str,
+    engine: Optional[str] = None,
 ) -> int:
     if source_lang == target_lang:
         return 0
 
     soup = BeautifulSoup(html_path.read_text(encoding="utf-8", errors="ignore"), "lxml")
     vision = VisionLLMClient()
-    translator = LLMTranslator()
+    translator = get_translator(engine)
     html_dir = html_path.parent
     translated_blocks = 0
 

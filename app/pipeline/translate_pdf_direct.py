@@ -15,7 +15,8 @@ from app.pipeline.extract_native_blocks import (
 )
 from app.pipeline.fonts import resolve_font_for_text
 from app.pipeline.translate_pdf_image_text import translate_pdf_image_text
-from app.pipeline.translator_llm import LLMTranslator, should_retry_translation
+from app.pipeline.translator_factory import get_translator
+from app.pipeline.translator_llm import should_retry_translation
 
 
 @dataclass(frozen=True)
@@ -160,12 +161,13 @@ def translate_pdf_direct(
     target_lang: str,
     source_lang: Optional[str] = None,
     translate_image_text: bool = False,
+    engine: Optional[str] = None,
 ) -> DirectTranslationStats:
     blocks = extract_native_text_blocks(pdf_in)
     if not blocks:
         raise RuntimeError("No translatable text lines found in PDF.")
 
-    translator = LLMTranslator()
+    translator = get_translator(engine)
     if source_lang is None:
         samples = collect_language_detection_samples(blocks)
         metadata_language = extract_pdf_metadata_language(pdf_in)
@@ -225,6 +227,7 @@ def translate_pdf_direct(
                 doc,
                 source_lang=source_lang,
                 target_lang=target_lang,
+                engine=engine,
             )
         for page_index, page in enumerate(doc):
             _restore_page_links(page, page_links.get(page_index, []))

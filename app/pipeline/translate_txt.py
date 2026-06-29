@@ -38,6 +38,7 @@ def translate_txt(
     *,
     target_lang: str,
     source_lang: str | None = None,
+    engine: str | None = None,
 ) -> SegmentTranslationStats:
     original_text = _decode_text_bytes(txt_in.read_bytes())
     segments = _split_text_segments(original_text)
@@ -45,6 +46,7 @@ def translate_txt(
         segments,
         target_lang=target_lang,
         source_lang=source_lang,
+        engine=engine,
     )
     txt_out.parent.mkdir(parents=True, exist_ok=True)
     txt_out.write_text("".join(translated_segments), encoding="utf-8")

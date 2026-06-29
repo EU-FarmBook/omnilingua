@@ -10,7 +10,8 @@ import fitz  # PyMuPDF
 
 from app.pipeline.block_schema import TextStyleHint
 from app.pipeline.fonts import resolve_font_for_text
-from app.pipeline.translator_llm import LLMTranslator, should_retry_translation
+from app.pipeline.translator_factory import get_translator
+from app.pipeline.translator_llm import should_retry_translation
 from app.pipeline.vision_llm import VisionLLMClient, VisionTextBlock
 
 
@@ -53,7 +54,7 @@ def _normalized_block_to_pdf_rect(block: VisionTextBlock, image_rect: fitz.Rect)
 
 
 def _translate_block_text(
-    translator: LLMTranslator,
+    translator,
     source_text: str,
     source_lang: str,
     target_lang: str,
@@ -117,12 +118,13 @@ def translate_pdf_image_text(
     *,
     source_lang: str,
     target_lang: str,
+    engine: Optional[str] = None,
 ) -> ImageTextTranslationStats:
     if source_lang == target_lang:
         return ImageTextTranslationStats(0, 0, 0, 0)
 
     vision = VisionLLMClient()
-    translator = LLMTranslator()
+    translator = get_translator(engine)
     image_regions_processed = 0
     image_blocks_translated = 0
     image_blocks_rejected = 0

@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from app.core.languages import validate_optional_language_code
+from app.core.engines import is_deepl_supported, validate_engine
+from app.core.languages import EU_LANGUAGE_NAMES, validate_optional_language_code
 from app.pipeline.convert_legacy_office import convert_legacy_office_document
 from app.pipeline.convert_pdf_to_html import convert_pdf_to_html
 from app.pipeline.playwright_support import ensure_chromium_installed
@@ -99,6 +100,15 @@ def main() -> int:
         default="direct",
         help="Pipeline engine: 'html' (pdftohtml round-trip) or 'direct' (PDF block rewrite).",
     )
+    ap.add_argument(
+        "--engine",
+        choices=("llm", "deepl", "adaptive"),
+        default=None,
+        help=(
+            "Translation backend: 'llm' (default), 'deepl', or 'adaptive' (DeepL first, "
+            "fall back to LLM on any DeepL error). Defaults to the TRANSLATION_ENGINE env var."
+        ),
+    )
     args = ap.parse_args()
 
     input_arg = args.document_in or args.pdf_in
@@ -118,6 +128,14 @@ def main() -> int:
         raise ValueError(str(exc)) from exc
     if args.target_lang and args.source_lang and args.target_lang == args.source_lang:
         raise ValueError("--source-lang and --target-lang must be different when both are provided.")
+
+    args.engine = validate_engine(args.engine)
+    if args.engine == "deepl" and args.target_lang and not is_deepl_supported(args.target_lang):
+        name = EU_LANGUAGE_NAMES.get(args.target_lang, args.target_lang)
+        raise ValueError(
+            f"DeepL does not support translation into {name} ('{args.target_lang}'). "
+            f"Use --engine llm or --engine adaptive for this language."
+        )
 
     out_path = resolve_output_path(
         args.pdf_out,
@@ -161,6 +179,7 @@ def main() -> int:
                 out_path,
                 target_lang=args.target_lang,
                 source_lang=args.source_lang,
+                engine=args.engine,
             )
         elif actual_suffix == ".docx":
             stats = translate_docx(
@@ -168,6 +187,7 @@ def main() -> int:
                 out_path,
                 target_lang=args.target_lang,
                 source_lang=args.source_lang,
+                engine=args.engine,
             )
         else:
             stats = translate_pptx(
@@ -175,6 +195,7 @@ def main() -> int:
                 out_path,
                 target_lang=args.target_lang,
                 source_lang=args.source_lang,
+                engine=args.engine,
             )
 
         print(f"Source language: {stats.source_lang}")
@@ -197,6 +218,7 @@ def main() -> int:
             target_lang=args.target_lang,
             source_lang=args.source_lang,
             translate_image_text=args.translate_image_text,
+            engine=args.engine,
         )
         print(f"Source language: {stats.source_lang}")
         print(
@@ -242,7 +264,8 @@ def main() -> int:
             html_original,
             html_translated,
             target_lang=args.target_lang,
-            source_lang=args.source_lang
+            source_lang=args.source_lang,
+            engine=args.engine,
         )
         html_for_pdf = html_translated
     elif args.mapping_json:

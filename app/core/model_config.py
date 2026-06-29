@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Optional
 
 
 def _env_first(*names: str, default: str = "") -> str:
@@ -26,6 +27,23 @@ class ModelEndpointConfig:
     api_url: str
     api_key: str
     model: str
+
+
+@dataclass(frozen=True)
+class DeepLConfig:
+    api_key: str
+    server_url: Optional[str]
+    en_variant: str
+    pt_variant: str
+
+
+def get_deepl_config() -> "DeepLConfig":
+    return DeepLConfig(
+        api_key=_env_first("DEEPL_API_KEY", "DEEPL_AUTH_KEY", default=""),
+        server_url=_env_first("DEEPL_SERVER_URL", "DEEPL_API_URL", default="") or None,
+        en_variant=_env_first("DEEPL_EN_VARIANT", default="EN-GB"),
+        pt_variant=_env_first("DEEPL_PT_VARIANT", default="PT-PT"),
+    )
 
 
 def get_text_model_config() -> ModelEndpointConfig:

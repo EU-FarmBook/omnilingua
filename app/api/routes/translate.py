@@ -52,6 +52,17 @@ CommonLayoutEngine = Annotated[
         description="Translation engine. 'direct' is recommended for better layout fidelity.",
     ),
 ]
+CommonEngine = Annotated[
+    Optional[str],
+    Form(
+        description=(
+            "Translation backend: 'llm' (default), 'deepl', or 'adaptive' (DeepL first, "
+            "fall back to LLM on any DeepL error). Leave empty to use the TRANSLATION_ENGINE "
+            "server default."
+        ),
+        examples=["adaptive"],
+    ),
+]
 AdvancedSaveHtml = Annotated[
     bool,
     Form(
@@ -96,6 +107,7 @@ async def translate_pdf(
     file: CommonFile,
     target_lang: CommonTargetLang = None,
     source_lang: CommonSourceLang = None,
+    engine: CommonEngine = None,
 ) -> FileResponse:
     result = await run_translation(
         file=file,
@@ -105,6 +117,7 @@ async def translate_pdf(
         save_html=False,
         mapping_json=None,
         translate_image_text=False,
+        engine=engine,
     )
     background_tasks.add_task(cleanup_dir, result.tmp_root)
     return FileResponse(
@@ -124,11 +137,13 @@ async def translate_document(
     file: DocumentFile,
     target_lang: CommonTargetLang = None,
     source_lang: CommonSourceLang = None,
+    engine: CommonEngine = None,
 ) -> FileResponse:
     result = await run_document_translation(
         file=file,
         target_lang=target_lang,
         source_lang=source_lang,
+        engine=engine,
     )
     background_tasks.add_task(cleanup_document_dir, result.tmp_root)
     return FileResponse(
@@ -163,6 +178,7 @@ async def translate_pdf_advanced(
     save_html: AdvancedSaveHtml = False,
     mapping_json: AdvancedMappingJson = None,
     translate_image_text: AdvancedTranslateImageText = False,
+    engine: CommonEngine = None,
 ) -> FileResponse:
     result = await run_translation(
         file=file,
@@ -172,6 +188,7 @@ async def translate_pdf_advanced(
         save_html=save_html,
         mapping_json=mapping_json,
         translate_image_text=translate_image_text,
+        engine=engine,
     )
     background_tasks.add_task(cleanup_dir, result.tmp_root)
     return FileResponse(

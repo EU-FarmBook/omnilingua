@@ -31,6 +31,7 @@ def translate_docx(
     *,
     target_lang: str,
     source_lang: str | None = None,
+    engine: str | None = None,
 ) -> SegmentTranslationStats:
     paragraph_entries: list[tuple[str, list[ET.Element]]] = []
     part_roots: dict[str, ET.Element] = {}
@@ -53,6 +54,7 @@ def translate_docx(
             texts,
             target_lang=target_lang,
             source_lang=source_lang,
+            engine=engine,
         )
 
         for translated, (_, nodes) in zip(translated_texts, paragraph_entries):
