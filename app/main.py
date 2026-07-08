@@ -22,6 +22,8 @@ fonts, and formatting as closely as possible.
 - `.doc`, `.docx`
 - `.ppt`, `.pptx`
 
+Formula-heavy or equation-heavy PDFs are rejected before translation.
+
 ### Translation backend
 
 Use the optional `engine` field to choose `llm`, `deepl`, or `adaptive`. If omitted,

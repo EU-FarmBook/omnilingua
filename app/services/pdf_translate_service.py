@@ -12,6 +12,10 @@ from fastapi import HTTPException, UploadFile
 from app.core.engines import is_deepl_supported, validate_engine
 from app.core.languages import EU_LANGUAGE_NAMES, validate_optional_language_code
 from app.pipeline.convert_pdf_to_html import convert_pdf_to_html
+from app.pipeline.pdf_content_policy import (
+    PdfContentPolicyError,
+    ensure_pdf_translation_allowed,
+)
 from app.pipeline.pdf_page_size import get_first_page_size
 from app.pipeline.playwright_support import ensure_chromium_installed_async
 from app.pipeline.render_html_to_pdf import render_html_to_pdf
@@ -142,6 +146,7 @@ async def run_translation(
             )
             return TranslationResult(tmp_root=tmp_root, output_pdf=out_pdf)
 
+        ensure_pdf_translation_allowed(in_pdf)
         await ensure_chromium_installed_async()
 
         page_size = get_first_page_size(in_pdf)
@@ -193,5 +198,7 @@ async def run_translation(
 
     except HTTPException:
         raise
+    except PdfContentPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Translation pipeline failed: {exc}") from exc

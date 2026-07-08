@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from app.core.engines import is_deepl_supported, validate_engine
 from app.core.languages import EU_LANGUAGE_NAMES, validate_optional_language_code
 from app.pipeline.convert_legacy_office import convert_legacy_office_document
+from app.pipeline.pdf_content_policy import PdfContentPolicyError
 from app.pipeline.convert_pdf_to_html import convert_pdf_to_html
 from app.pipeline.playwright_support import ensure_chromium_installed
 from app.pipeline.replace_html_text import load_mapping, replace_text_nodes
@@ -327,4 +329,8 @@ def main() -> int:
     return 0
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except PdfContentPolicyError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1)

@@ -14,6 +14,7 @@ from app.pipeline.extract_native_blocks import (
     extract_native_text_blocks,
 )
 from app.pipeline.fonts import resolve_font_for_text
+from app.pipeline.pdf_content_policy import ensure_pdf_translation_allowed
 from app.pipeline.translate_pdf_image_text import translate_pdf_image_text
 from app.pipeline.translator_factory import get_translator
 from app.pipeline.translator_llm import should_retry_translation
@@ -197,6 +198,7 @@ def translate_pdf_direct(
     translate_image_text: bool = False,
     engine: Optional[str] = None,
 ) -> DirectTranslationStats:
+    ensure_pdf_translation_allowed(pdf_in)
     blocks = extract_native_text_blocks(pdf_in)
     if not blocks:
         raise RuntimeError("No translatable text lines found in PDF.")

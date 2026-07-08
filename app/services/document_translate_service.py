@@ -12,6 +12,7 @@ from fastapi import HTTPException, UploadFile
 from app.core.engines import is_deepl_supported, validate_engine
 from app.core.languages import EU_LANGUAGE_NAMES, validate_optional_language_code
 from app.pipeline.convert_legacy_office import convert_legacy_office_document
+from app.pipeline.pdf_content_policy import PdfContentPolicyError
 from app.pipeline.translate_docx import translate_docx
 from app.pipeline.translate_pdf_direct import translate_pdf_direct
 from app.pipeline.translate_pptx import translate_pptx
@@ -185,5 +186,7 @@ async def run_document_translation(
 
     except HTTPException:
         raise
+    except PdfContentPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Translation pipeline failed: {exc}") from exc

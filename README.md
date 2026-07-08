@@ -218,7 +218,8 @@ curl -X POST "http://localhost:15000/translate/document" \
 ```
 
 The public API exposes a single translation endpoint. It currently supports
-`.pdf`, `.txt`, `.doc`, `.docx`, `.ppt`, and `.pptx`. The optional `engine` field
+`.pdf`, `.txt`, `.doc`, `.docx`, `.ppt`, and `.pptx`. Formula-heavy or
+equation-heavy PDFs are rejected before translation. The optional `engine` field
 accepts `llm`, `deepl`, or `adaptive`; omit it to use the `TRANSLATION_ENGINE`
 server default.
 
@@ -367,6 +368,7 @@ The safest long-term approach for structured formats is to extract translatable 
 
 - `/translate/document` is the public translation endpoint.
 - It currently supports `.pdf`, `.txt`, `.doc`, `.docx`, `.ppt`, and `.pptx`.
+- Formula-heavy or equation-heavy PDFs are rejected with HTTP 400.
 - PDF-specific routes are hidden compatibility/internal routes, not intended for end users.
 - Structured formats such as `.json`, `.csv`, `.xls`, and `.xlsx` need dedicated extraction/rebuild support before they should be accepted.
 - `work/` and `output/` are generated artifacts and should not be committed.
