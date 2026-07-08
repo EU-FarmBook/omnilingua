@@ -248,8 +248,9 @@ Respond with ONLY the ISO 639-1 language code (e.g., "en", "es", "fr", "de")."""
 CRITICAL RULES:
 1. Translate ONLY the natural language content
 2. PRESERVE exactly: numbers, dates, emails, URLs, codes, acronyms in ALL CAPS
-3. Maintain structure where possible
-4. Respond ONLY with valid JSON in the format: {{"id": "translation", ...}}"""
+3. PRESERVE exactly tokens like ZXQNT0QXZ
+4. Maintain structure where possible
+5. Respond ONLY with valid JSON in the format: {{"id": "translation", ...}}"""
 
         user_prompt = f"""Translate from {source_lang} to {target_lang}.
 
@@ -308,8 +309,9 @@ Each item is a separate text snippet. Translate each independently:
 CRITICAL RULES:
 1. Translate ONLY the natural language content
 2. PRESERVE exactly: numbers, dates, emails, URLs, codes, acronyms in ALL CAPS
-3. Maintain the same length and structure where possible
-4. Respond ONLY with valid JSON in the format: {{"id": "translation", ...}}"""
+3. PRESERVE exactly tokens like ZXQNT0QXZ
+4. Maintain the same length and structure where possible
+5. Respond ONLY with valid JSON in the format: {{"id": "translation", ...}}"""
 
         user_prompt = f"""Translate from {source_lang} to {target_lang}.
 
@@ -362,7 +364,10 @@ Each item is a separate text snippet. Translate each independently:
         """
         system_prompt = (
             "You are a translation engine. Translate fully and accurately. "
-            "Output only the translated text. Do not include the source text."
+            "Output only the translated text. Do not include the source text. "
+            "Preserve tokens like ZXQNT0QXZ exactly. "
+            "For short labels, captions, and PDF line fragments, keep the translation concise "
+            "and do not repeat words or phrases."
         )
         user_prompt = (
             f"Translate from {source_lang} to {target_lang}. "

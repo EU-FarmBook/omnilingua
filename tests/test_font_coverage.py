@@ -97,9 +97,10 @@ class LayoutFitStatusTests(unittest.TestCase):
         self.assertEqual(status, "fit")
         doc.close()
 
-    def test_overlong_text_in_tight_box_is_truncated_or_dropped(self) -> None:
+    def test_overlong_text_in_tight_box_preserves_source_when_unplaced(self) -> None:
         doc = fitz.open()
         page = doc.new_page(width=595, height=842)
+        page.insert_text((40, 109), "source", fontsize=8.0)
         tight = self._block((40, 100, 150, 112), kind="caption", font_size=9.0)
         long_tr = (
             "Wasserverbrauch pro Tonne verarbeitetem landwirtschaftlichem Material unter "
@@ -107,7 +108,8 @@ class LayoutFitStatusTests(unittest.TestCase):
             "Bewässerungsinfrastruktur der gesamten Region."
         )
         status = _fit_and_write_block(page, tight, long_tr)
-        self.assertIn(status, ("truncated", "dropped"))
+        self.assertEqual(status, "unplaced")
+        self.assertIn("source", page.get_text())
         doc.close()
 
     def test_degenerate_box_is_skipped_without_redaction(self) -> None:

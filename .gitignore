@@ -10,6 +10,10 @@
 # PDF files (input/output documents)
 *.pdf
 
+# DOC files (input/output documents)
+*.doc
+*.docx
+
 # Working directories (intermediate HTML, temp files)
 workdir/
 work/

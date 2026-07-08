@@ -15,6 +15,12 @@ from app.pipeline.extract_native_blocks import (
 )
 from app.pipeline.fonts import resolve_font_for_text
 from app.pipeline.pdf_content_policy import ensure_pdf_translation_allowed
+from app.pipeline.protected_text import (
+    has_unprotected_translatable_text,
+    is_contact_identity_text,
+    protect_nontranslatable_text,
+    restore_protected_text,
+)
 from app.pipeline.translate_pdf_image_text import translate_pdf_image_text
 from app.pipeline.translator_factory import get_translator
 from app.pipeline.translator_llm import should_retry_translation
@@ -29,10 +35,11 @@ class DirectTranslationStats:
     blocks_rejected: int
     api_calls: int
     source_lang: str
-    # Layout-fit accounting (subset of blocks_translated): a translation that did not
-    # fit its box was either truncated with an ellipsis ("truncated") or could not be
-    # placed at all after the source was redacted ("dropped" = silent content loss).
+    # Layout-fit accounting. If a translation cannot be placed in a readable size,
+    # the source text is preserved and the block is counted as unplaced.
     blocks_truncated: int = 0
+    blocks_unplaced: int = 0
+    # Backward-compatible field; new code should not drop content after redaction.
     blocks_dropped: int = 0
     image_regions_processed: int = 0
     image_blocks_translated: int = 0
@@ -51,22 +58,31 @@ def _capture_page_links(page: fitz.Page) -> list[dict]:
     return captured
 
 
+def _link_key(link: dict) -> tuple | None:
+    rect = link.get("from")
+    if rect is None:
+        return None
+    rect = fitz.Rect(rect)
+    return (
+        round(rect.x0, 2),
+        round(rect.y0, 2),
+        round(rect.x1, 2),
+        round(rect.y1, 2),
+        link.get("kind"),
+        link.get("uri"),
+        link.get("page"),
+    )
+
+
 def _restore_page_links(page: fitz.Page, links: list[dict]) -> None:
-    seen: set[tuple] = set()
+    seen: set[tuple] = {
+        key for link in page.get_links() if (key := _link_key(link)) is not None
+    }
     for link in links:
         if "from" not in link:
             continue
-        rect = link["from"]
-        key = (
-            round(rect.x0, 2),
-            round(rect.y0, 2),
-            round(rect.x1, 2),
-            round(rect.y1, 2),
-            link.get("kind"),
-            link.get("uri"),
-            link.get("page"),
-        )
-        if key in seen:
+        key = _link_key(link)
+        if key is None or key in seen:
             continue
         seen.add(key)
 
@@ -81,15 +97,153 @@ def _is_display_block(block: ExtractedTextBlock) -> bool:
     return block.kind == "title" or block.style.font_size >= 36.0
 
 
-def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated: str) -> str:
+def _redaction_rect_avoiding(
+    source_rect: fitz.Rect,
+    avoid_rects: list[fitz.Rect],
+) -> fitz.Rect:
+    rect = fitz.Rect(source_rect)
+    for avoid in avoid_rects:
+        avoid = fitz.Rect(avoid)
+        horizontal_overlap = min(rect.x1, avoid.x1) - max(rect.x0, avoid.x0)
+        vertical_overlap = min(rect.y1, avoid.y1) - max(rect.y0, avoid.y0)
+        if horizontal_overlap <= 0 or vertical_overlap <= 0:
+            continue
+
+        horizontal_ratio = horizontal_overlap / max(1.0, min(rect.width, avoid.width))
+        vertical_ratio = vertical_overlap / max(1.0, min(rect.height, avoid.height))
+        gap = 0.25
+        if horizontal_ratio >= 0.25:
+            if rect.y0 < avoid.y0 < rect.y1:
+                rect.y1 = min(rect.y1, avoid.y0 - gap)
+            elif rect.y0 < avoid.y1 < rect.y1:
+                rect.y0 = max(rect.y0, avoid.y1 + gap)
+        elif vertical_ratio >= 0.25:
+            if rect.x0 < avoid.x0 < rect.x1:
+                rect.x1 = min(rect.x1, avoid.x0 - gap)
+            elif rect.x0 < avoid.x1 < rect.x1:
+                rect.x0 = max(rect.x0, avoid.x1 + gap)
+
+    return rect
+
+
+def _same_rect(a: fitz.Rect, b: fitz.Rect, tolerance: float = 0.5) -> bool:
+    return (
+        abs(a.x0 - b.x0) <= tolerance
+        and abs(a.y0 - b.y0) <= tolerance
+        and abs(a.x1 - b.x1) <= tolerance
+        and abs(a.y1 - b.y1) <= tolerance
+    )
+
+
+def _overlap_amount(a0: float, a1: float, b0: float, b1: float) -> float:
+    return min(a1, b1) - max(a0, b0)
+
+
+def _candidate_layout_rects(
+    page: fitz.Page,
+    block: ExtractedTextBlock,
+    source_rect: fitz.Rect,
+    base_rect: fitz.Rect,
+    obstacle_rects: list[fitz.Rect],
+) -> list[fitz.Rect]:
+    candidates = [fitz.Rect(base_rect)]
+    display_block = _is_display_block(block)
+    if display_block or block.kind != "line" or source_rect.width >= 220:
+        return candidates
+
+    margin = 2.0
+    gap = 2.0
+    left = page.rect.x0 + margin
+    right = page.rect.x1 - margin
+
+    for obstacle in obstacle_rects:
+        obstacle = fitz.Rect(obstacle)
+        if _same_rect(source_rect, obstacle):
+            continue
+        vertical_overlap = _overlap_amount(source_rect.y0, source_rect.y1, obstacle.y0, obstacle.y1)
+        if vertical_overlap <= 0.5:
+            continue
+        if obstacle.x1 <= source_rect.x0:
+            left = max(left, obstacle.x1 + gap)
+        elif obstacle.x0 >= source_rect.x1:
+            right = min(right, obstacle.x0 - gap)
+
+    if right - left < base_rect.width + 12:
+        return candidates
+
+    max_height = max(base_rect.height, source_rect.height + (block.style.font_size * 3.2))
+    bottom = min(page.rect.y1 - margin, source_rect.y0 + max_height)
+    expanded = fitz.Rect(left, base_rect.y0, right, bottom)
+
+    for obstacle in obstacle_rects:
+        obstacle = fitz.Rect(obstacle)
+        if _same_rect(source_rect, obstacle):
+            continue
+        horizontal_overlap = _overlap_amount(expanded.x0, expanded.x1, obstacle.x0, obstacle.x1)
+        if horizontal_overlap <= 0:
+            continue
+        overlap_ratio = horizontal_overlap / max(1.0, min(expanded.width, obstacle.width))
+        if overlap_ratio < 0.12:
+            continue
+        if obstacle.y0 >= source_rect.y1:
+            expanded.y1 = min(expanded.y1, obstacle.y0 - gap)
+
+    if expanded.width > base_rect.width + 12 and expanded.height >= base_rect.height:
+        candidates.append(expanded)
+
+    unique: list[fitz.Rect] = []
+    for rect in candidates:
+        if not any(_same_rect(rect, existing) for existing in unique):
+            unique.append(rect)
+    return unique
+
+
+def _measure_textbox_spare(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    text: str,
+    *,
+    fontname: str,
+    fontfile: str | None,
+    fontsize: float,
+    color: tuple[float, float, float],
+    lineheight: float,
+) -> float:
+    scratch = fitz.open()
+    try:
+        scratch_page = scratch.new_page(width=page.rect.width, height=page.rect.height)
+        if fontfile:
+            scratch_page.insert_font(fontname=fontname, fontfile=fontfile)
+        return scratch_page.insert_textbox(
+            rect,
+            text,
+            fontname=fontname,
+            fontfile=fontfile,
+            fontsize=fontsize,
+            color=color,
+            align=fitz.TEXT_ALIGN_LEFT,
+            lineheight=lineheight,
+            overlay=True,
+        )
+    finally:
+        scratch.close()
+
+
+def _fit_and_write_block(
+    page: fitz.Page,
+    block: ExtractedTextBlock,
+    translated: str,
+    protected_rects: list[fitz.Rect] | None = None,
+    obstacle_rects: list[fitz.Rect] | None = None,
+) -> str:
     """Render ``translated`` into ``block``'s box.
 
-    Returns one of: ``"fit"`` (placed in full), ``"truncated"`` (placed but clipped
-    with an ellipsis — text lost), ``"dropped"`` (source redacted but nothing could be
-    placed — total content loss), or ``"skipped"`` (degenerate/empty box, source left
-    untouched).
+    Returns one of: ``"fit"`` (placed in full), ``"unplaced"`` (translation could
+    not be placed at a readable size, so source text was preserved), or ``"skipped"``
+    (degenerate/empty box, source left untouched).
     """
-    rect = fitz.Rect(*block.bbox)
+    source_rect = fitz.Rect(*block.bbox)
+    rect = fitz.Rect(source_rect)
     if rect.width < 3 or rect.height < 3:
         return "skipped"
 
@@ -124,13 +278,12 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
 
     max_x1 = min(page.rect.x1 - 2.0, rect.x1 + extra_width)
     rect = fitz.Rect(rect.x0, rect.y0, max_x1, rect.y0 + min_h)
-
-    # Remove source text in this line box while preserving images / line art / background.
-    page.add_redact_annot(rect, fill=None)
-    page.apply_redactions(
-        images=getattr(fitz, "PDF_REDACT_IMAGE_NONE", 0),
-        graphics=getattr(fitz, "PDF_REDACT_LINE_ART_NONE", 0),
-        text=getattr(fitz, "PDF_REDACT_TEXT_REMOVE", 0),
+    candidate_rects = _candidate_layout_rects(
+        page,
+        block,
+        source_rect,
+        rect,
+        obstacle_rects or [],
     )
 
     fontname, fontfile, render_text = resolve_font_for_text(page, block.style, text)
@@ -147,47 +300,72 @@ def _fit_and_write_block(page: fitz.Page, block: ExtractedTextBlock, translated:
         size = max(6.5, min(block.style.font_size, 28.0))
         line_height = 1.12
 
-    for _ in range(10):
-        spare = page.insert_textbox(
-            rect,
-            render_text,
-            fontname=fontname,
-            fontfile=fontfile,
-            fontsize=size,
-            color=block.style.color_rgb,
-            align=fitz.TEXT_ALIGN_LEFT,
-            lineheight=line_height,
-            overlay=True,
-        )
-        if spare >= -0.5:
-            return "fit"
-        size *= 0.92
-
-    # Last fallback to avoid complete miss.
-    clipped = render_text[: max(1, int(len(render_text) * 0.72))].rstrip() + "…"
-    spare = page.insert_textbox(
-        rect,
-        clipped,
-        fontname=fontname,
-        fontfile=fontfile,
-        fontsize=max(6.0, size),
-        color=block.style.color_rgb,
-        align=fitz.TEXT_ALIGN_LEFT,
-        lineheight=1.08,
-        overlay=True,
+    minimum_size = min(size, 7.0)
+    placed_size: float | None = None
+    placed_line_height = line_height
+    placed_rect = rect
+    line_height_candidates = (
+        line_height,
+        min(line_height, 1.0),
+        min(line_height, 0.94),
     )
+    for candidate_rect in candidate_rects:
+        for candidate_line_height in line_height_candidates:
+            candidate_size = size
+            while candidate_size >= minimum_size - 0.01:
+                spare = _measure_textbox_spare(
+                    page,
+                    candidate_rect,
+                    render_text,
+                    fontname=fontname,
+                    fontfile=fontfile,
+                    fontsize=candidate_size,
+                    color=block.style.color_rgb,
+                    lineheight=candidate_line_height,
+                )
+                if spare >= -0.5:
+                    placed_size = candidate_size
+                    placed_line_height = candidate_line_height
+                    placed_rect = candidate_rect
+                    break
+                candidate_size *= 0.92
+            if placed_size is not None:
+                break
+        if placed_size is not None:
+            break
+
     snippet = text[:60] + ("…" if len(text) > 60 else "")
-    if spare >= -3.0:
+    if placed_size is None:
         print(
             f"⚠️  block {block.block_id} ({block.kind}) p{block.page_index + 1}: "
-            f"translation too long for its box — TRUNCATED to fit (text lost): {snippet!r}"
+            f"translation could not fit at readable size — UNPLACED, source kept: {snippet!r}"
         )
-        return "truncated"
-    print(
-        f"⚠️  block {block.block_id} ({block.kind}) p{block.page_index + 1}: "
-        f"translation could not be placed after redaction — DROPPED (content lost): {snippet!r}"
+        return "unplaced"
+
+    # Remove source text only after the replacement has passed a dry-run fit check.
+    # Some extracted line boxes overlap vertically; keep protected-only contact
+    # details out of the redaction rectangle so they remain exact.
+    redaction_rect = _redaction_rect_avoiding(source_rect, protected_rects or [])
+    if redaction_rect.width < 1.0 or redaction_rect.height < 1.0:
+        return "unplaced"
+    page.add_redact_annot(redaction_rect, fill=None)
+    page.apply_redactions(
+        images=getattr(fitz, "PDF_REDACT_IMAGE_NONE", 0),
+        graphics=getattr(fitz, "PDF_REDACT_LINE_ART_NONE", 0),
+        text=getattr(fitz, "PDF_REDACT_TEXT_REMOVE", 0),
     )
-    return "dropped"
+    page.insert_textbox(
+        placed_rect,
+        render_text,
+        fontname=fontname,
+        fontfile=fontfile,
+        fontsize=placed_size,
+        color=block.style.color_rgb,
+        align=fitz.TEXT_ALIGN_LEFT,
+        lineheight=placed_line_height,
+        overlay=True,
+    )
+    return "fit"
 
 
 def translate_pdf_direct(
@@ -213,6 +391,19 @@ def translate_pdf_direct(
     if source_lang == target_lang:
         raise ValueError(f"Source and target language are the same ({source_lang}).")
 
+    protected_sources = {
+        block.block_id: protect_nontranslatable_text(block.text) for block in blocks
+    }
+    protected_rects_by_page: dict[int, list[fitz.Rect]] = {}
+    obstacle_rects_by_page: dict[int, list[fitz.Rect]] = {}
+    for block in blocks:
+        block_rect = fitz.Rect(*block.bbox)
+        obstacle_rects_by_page.setdefault(block.page_index, []).append(block_rect)
+        protected_source = protected_sources[block.block_id]
+        if has_unprotected_translatable_text(protected_source.text):
+            continue
+        protected_rects_by_page.setdefault(block.page_index, []).append(block_rect)
+
     translated_map: Dict[int, str] = {}
     api_calls = 0
     retried = 0
@@ -221,24 +412,47 @@ def translate_pdf_direct(
     for i, block in enumerate(blocks, start=1):
         if i % 25 == 0 or i == len(blocks):
             print(f"Translating lines: {i}/{len(blocks)}")
-        candidate = translator.translate_single_strict(block.text, source_lang, target_lang)
+        protected_source = protected_sources[block.block_id]
+        if not has_unprotected_translatable_text(protected_source.text):
+            continue
+        if is_contact_identity_text(protected_source.text):
+            continue
+        candidate_raw = translator.translate_single_strict(
+            protected_source.text,
+            source_lang,
+            target_lang,
+        )
         api_calls += 1
-        if not candidate:
+        if not candidate_raw:
             rejected += 1
             continue
-        candidate = re.sub(r"\s*\n+\s*", " ", candidate).strip()
+        candidate_for_retry = re.sub(r"\s*\n+\s*", " ", candidate_raw).strip()
+        candidate = restore_protected_text(
+            candidate_for_retry,
+            protected_source.replacements,
+        ).strip()
 
         if len(block.text.strip()) > 16 and should_retry_translation(
-            block.text, candidate, source_lang, target_lang
+            protected_source.text, candidate_for_retry, source_lang, target_lang
         ):
-            retry = translator.translate_single_strict(block.text, source_lang, target_lang)
+            retry_raw = translator.translate_single_strict(
+                protected_source.text,
+                source_lang,
+                target_lang,
+            )
             api_calls += 1
             retried += 1
-            if not retry:
+            if not retry_raw:
                 rejected += 1
                 continue
-            retry = re.sub(r"\s*\n+\s*", " ", retry).strip()
-            if should_retry_translation(block.text, retry, source_lang, target_lang):
+            retry_for_retry = re.sub(r"\s*\n+\s*", " ", retry_raw).strip()
+            retry = restore_protected_text(
+                retry_for_retry,
+                protected_source.replacements,
+            ).strip()
+            if should_retry_translation(
+                protected_source.text, retry_for_retry, source_lang, target_lang
+            ):
                 rejected += 1
                 continue
             candidate = retry
@@ -251,19 +465,25 @@ def translate_pdf_direct(
     try:
         translated_count = 0
         truncated_count = 0
-        dropped_count = 0
+        unplaced_count = 0
         for block in blocks:
             translated = translated_map.get(block.block_id)
             if not translated:
                 continue
             page = doc[block.page_index]
-            status = _fit_and_write_block(page, block, translated)
-            if status in ("fit", "truncated"):
+            status = _fit_and_write_block(
+                page,
+                block,
+                translated,
+                protected_rects=protected_rects_by_page.get(block.page_index),
+                obstacle_rects=obstacle_rects_by_page.get(block.page_index),
+            )
+            if status == "fit":
                 translated_count += 1
             if status == "truncated":
                 truncated_count += 1
-            elif status == "dropped":
-                dropped_count += 1
+            elif status == "unplaced":
+                unplaced_count += 1
         if translate_image_text:
             print("Translating text embedded in images...")
             image_stats = translate_pdf_image_text(
@@ -280,10 +500,10 @@ def translate_pdf_direct(
         doc.close()
 
     print(f"Retried suspicious lines: {retried} (rejected: {rejected})")
-    if truncated_count or dropped_count:
+    if truncated_count or unplaced_count:
         print(
             f"⚠️  Layout fit: {truncated_count} block(s) truncated, "
-            f"{dropped_count} block(s) dropped (translation longer than the original box)."
+            f"{unplaced_count} block(s) unplaced with source preserved."
         )
     total = len(blocks)
     return DirectTranslationStats(
@@ -295,7 +515,8 @@ def translate_pdf_direct(
         api_calls=api_calls,
         source_lang=source_lang,
         blocks_truncated=truncated_count,
-        blocks_dropped=dropped_count,
+        blocks_unplaced=unplaced_count,
+        blocks_dropped=0,
         image_regions_processed=image_stats.image_regions_processed if image_stats else 0,
         image_blocks_translated=image_stats.image_blocks_translated if image_stats else 0,
         image_blocks_rejected=image_stats.image_blocks_rejected if image_stats else 0,
