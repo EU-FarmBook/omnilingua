@@ -99,3 +99,6 @@ def is_contact_identity_text(text: str) -> bool:
 
     return all(word[:1].isupper() for word in informative_words)
 
+def contains_protected_token(text: str) -> bool:
+    return bool(_PROTECTED_TOKEN_RE.search(text))
+

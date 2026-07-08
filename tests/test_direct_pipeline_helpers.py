@@ -10,6 +10,7 @@ import fitz
 from app.pipeline.block_schema import ExtractedTextBlock, TextStyleHint
 from app.pipeline.fonts import sanitize_text_for_rendering
 from app.pipeline.protected_text import (
+    contains_protected_token,
     has_unprotected_translatable_text,
     is_contact_identity_text,
     protect_nontranslatable_text,
@@ -72,6 +73,8 @@ class DirectPipelineHelperTests(unittest.TestCase):
             ),
             "Contact rivera@agro-alimentarias.coop, old https://example.org/page, translated @FarmTeam.",
         )
+        self.assertTrue(contains_protected_token("ZXQNT0QXZ"))
+        self.assertFalse(contains_protected_token("rivera@agro-alimentarias.coop"))
 
     def test_contact_identity_text_is_preserved_without_translation(self) -> None:
         self.assertTrue(
@@ -236,6 +239,43 @@ class DirectPipelineHelperTests(unittest.TestCase):
                 self.assertIn("Ubersetzter Agrartext", text)
                 self.assertIn("Martina Jurjevic Varga, martina.j.varga@pp-medvednica.hr", text)
                 self.assertIn("rivera@agro-alimentarias.coop", text)
+            finally:
+                translated.close()
+
+    def test_direct_pdf_translation_retries_hallucinated_protection_token(self) -> None:
+        class FakeTranslator:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def translate_single_strict(self, text: str, source_lang: str, target_lang: str) -> str:
+                self.calls += 1
+                if self.calls == 1:
+                    return "Fehlerhafte ZXQNT0QXZ"
+                return "Saubere Ubersetzung"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_in = Path(tmpdir) / "source.pdf"
+            pdf_out = Path(tmpdir) / "translated.pdf"
+            doc = fitz.open()
+            try:
+                page = doc.new_page(width=420, height=180)
+                page.insert_text((72, 72), "Agricultural market improves local access", fontsize=11.0)
+                doc.save(pdf_in)
+            finally:
+                doc.close()
+
+            fake = FakeTranslator()
+            with patch("app.pipeline.translate_pdf_direct.get_translator", return_value=fake):
+                stats = translate_pdf_direct(pdf_in, pdf_out, target_lang="de", source_lang="en")
+
+            self.assertEqual(stats.api_calls, 2)
+            self.assertEqual(stats.blocks_retried, 1)
+            self.assertEqual(stats.blocks_rejected, 0)
+            translated = fitz.open(pdf_out)
+            try:
+                text = translated[0].get_text().replace("\n", " ")
+                self.assertIn("Saubere Ubersetzung", text)
+                self.assertNotIn("ZXQNT", text)
             finally:
                 translated.close()
 

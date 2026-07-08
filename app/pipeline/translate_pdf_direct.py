@@ -16,6 +16,7 @@ from app.pipeline.extract_native_blocks import (
 from app.pipeline.fonts import resolve_font_for_text
 from app.pipeline.pdf_content_policy import ensure_pdf_translation_allowed
 from app.pipeline.protected_text import (
+    contains_protected_token,
     has_unprotected_translatable_text,
     is_contact_identity_text,
     protect_nontranslatable_text,
@@ -432,9 +433,13 @@ def translate_pdf_direct(
             protected_source.replacements,
         ).strip()
 
-        if len(block.text.strip()) > 16 and should_retry_translation(
+        needs_retry = len(block.text.strip()) > 16 and should_retry_translation(
             protected_source.text, candidate_for_retry, source_lang, target_lang
-        ):
+        )
+        if contains_protected_token(candidate):
+            needs_retry = True
+
+        if needs_retry:
             retry_raw = translator.translate_single_strict(
                 protected_source.text,
                 source_lang,
@@ -452,7 +457,7 @@ def translate_pdf_direct(
             ).strip()
             if should_retry_translation(
                 protected_source.text, retry_for_retry, source_lang, target_lang
-            ):
+            ) or contains_protected_token(retry):
                 rejected += 1
                 continue
             candidate = retry
