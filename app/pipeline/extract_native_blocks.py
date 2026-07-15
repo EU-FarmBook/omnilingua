@@ -9,6 +9,21 @@ import fitz  # PyMuPDF
 from app.pipeline.block_schema import ExtractedTextBlock, TextStyleHint
 
 
+# A list/bullet marker followed by any whitespace — crucially including a TAB,
+# which these poster PDFs use for the indent (e.g. "•\t Estonia ..."). Matching
+# only "• " (space) misread tab-indented bullets as table rows and blocked the
+# first line of a bullet from merging with its continuation.
+_BULLET_MARKER_RE = re.compile(r"^\s*[-•▪◦‣·*]\s")
+
+
+def _starts_with_bullet(text: str) -> bool:
+    return bool(_BULLET_MARKER_RE.match(text))
+
+
+def _strip_leading_bullet(text: str) -> str:
+    return _BULLET_MARKER_RE.sub("", text, count=1)
+
+
 def is_translatable_native_text(text: str) -> bool:
     stripped = text.strip()
     if len(stripped) < 2:
@@ -75,7 +90,15 @@ def _can_merge_lines(
     curr_bbox = current.bbox
     vertical_gap = curr_bbox[1] - prev_bbox[3]
     max_gap = max(previous.style.font_size * 0.7, 4.0)
-    if vertical_gap < -1.5 or vertical_gap > max_gap:
+    # Consecutive lines of a paragraph routinely have slightly overlapping
+    # bounding boxes: PyMuPDF line bboxes span the full ascender-to-descender
+    # height, which exceeds the baseline-to-baseline pitch, so ``vertical_gap``
+    # is mildly negative for normal leading. Tolerate up to ~half a line of
+    # overlap; a near-full-height overlap still signals same-row spans and is
+    # rejected. (A flat -1.5pt floor wrongly split every body line on tightly
+    # leaded layouts, forcing line-by-line translation and ransom-note sizing.)
+    min_gap = -max(2.0, previous.style.font_size * 0.55)
+    if vertical_gap < min_gap or vertical_gap > max_gap:
         return False
 
     left_delta = abs(curr_bbox[0] - prev_bbox[0])
@@ -124,7 +147,7 @@ def _join_text(previous_text: str, current_text: str) -> str:
 
 def _classify_block_kind(text: str, line_count: int) -> str:
     stripped = text.strip()
-    if stripped.startswith(("- ", "• ", "▪ ", "* ")):
+    if _starts_with_bullet(text):
         return "bullet"
     if stripped.endswith(":") and line_count == 1:
         return "label"
@@ -134,10 +157,13 @@ def _classify_block_kind(text: str, line_count: int) -> str:
 
 
 def _looks_like_table_row(text: str) -> bool:
-    stripped = " ".join(text.split()).strip()
+    # A leading bullet marker uses a tab as its indent; that tab does not make
+    # the line a table row, so ignore the marker before inspecting for tabs.
+    body = _strip_leading_bullet(text)
+    stripped = " ".join(body.split()).strip()
     if not stripped:
         return False
-    if "\t" in text:
+    if "\t" in body:
         return True
     if re.search(r"\b\d+(?:\.\d+)?\s*(?:mg|kg|mL|m2|m²|%)\b", stripped):
         return True
@@ -163,7 +189,7 @@ def _starts_new_structural_block(text: str) -> bool:
     stripped = text.lstrip()
     if not stripped:
         return False
-    if stripped.startswith(("- ", "• ", "▪ ", "* ")):
+    if _starts_with_bullet(stripped):
         return True
     if re.match(r"^(figure|fig\.|table|abstract|keywords|references)\b", stripped, re.IGNORECASE):
         return True

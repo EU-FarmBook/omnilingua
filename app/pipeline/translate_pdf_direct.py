@@ -230,27 +230,49 @@ def _measure_textbox_spare(
         scratch.close()
 
 
-def _fit_and_write_block(
+@dataclass(frozen=True)
+class _BlockWritePlan:
+    """A fully-resolved placement for one block, ready to be written to the page.
+
+    Planning is deliberately side-effect free: it decides *where* and *how* the
+    translation will be drawn but touches neither the source glyphs nor the page.
+    The caller applies every block's redaction first and only then inserts text,
+    so a later block's redaction can never erase text already placed for an
+    earlier, spatially overlapping block.
+    """
+
+    redaction_rect: fitz.Rect
+    placed_rect: fitz.Rect
+    render_text: str
+    fontname: str
+    fontfile: str | None
+    fontsize: float
+    line_height: float
+    color: tuple[float, float, float]
+
+
+def _plan_block_write(
     page: fitz.Page,
     block: ExtractedTextBlock,
     translated: str,
     protected_rects: list[fitz.Rect] | None = None,
     obstacle_rects: list[fitz.Rect] | None = None,
-) -> str:
-    """Render ``translated`` into ``block``'s box.
+) -> tuple[str, _BlockWritePlan | None]:
+    """Decide how ``translated`` should be rendered into ``block``'s box.
 
-    Returns one of: ``"fit"`` (placed in full), ``"unplaced"`` (translation could
-    not be placed at a readable size, so source text was preserved), or ``"skipped"``
-    (degenerate/empty box, source left untouched).
+    Pure (no page mutation). Returns ``(status, plan)`` where status is one of:
+    ``"fit"`` (a placement was found; ``plan`` is non-None), ``"unplaced"``
+    (translation could not be placed at a readable size, so source text should be
+    preserved), or ``"skipped"`` (degenerate/empty box, source left untouched).
     """
     source_rect = fitz.Rect(*block.bbox)
     rect = fitz.Rect(source_rect)
     if rect.width < 3 or rect.height < 3:
-        return "skipped"
+        return "skipped", None
 
     text = re.sub(r"\s*\n+\s*", " ", translated).strip()
     if not text:
-        return "skipped"
+        return "skipped", None
 
     display_block = _is_display_block(block)
     if display_block:
@@ -279,6 +301,37 @@ def _fit_and_write_block(
 
     max_x1 = min(page.rect.x1 - 2.0, rect.x1 + extra_width)
     rect = fitz.Rect(rect.x0, rect.y0, max_x1, rect.y0 + min_h)
+
+    # Clamp the box bottom so a reflowed translation (typically longer than the
+    # source) cannot spill into the block directly below it in the same column.
+    # Without this, merged multi-line paragraphs keep their font size and grow
+    # downward, overlapping the next paragraph. The font-shrink search below
+    # then fits the text into whatever vertical room is actually available.
+    #
+    # A neighbour counts as "below" when it *starts* clearly lower than this
+    # block's top — not when it starts below this block's bottom. On these
+    # tightly-packed posters, adjacent source line/paragraph boxes overlap by a
+    # few points, so keying off the bottom edge made the clamp never fire.
+    if not display_block and obstacle_rects:
+        vertical_limit = page.rect.y1 - 2.0
+        start_threshold = source_rect.y0 + max(4.0, block.style.font_size * 0.6)
+        for obstacle in obstacle_rects:
+            obstacle = fitz.Rect(obstacle)
+            if _same_rect(source_rect, obstacle):
+                continue
+            if obstacle.y0 <= start_threshold:
+                continue  # same row or above — not a block below this one
+            horizontal_overlap = _overlap_amount(
+                source_rect.x0, source_rect.x1, obstacle.x0, obstacle.x1
+            )
+            if horizontal_overlap <= min(source_rect.width, obstacle.width) * 0.30:
+                continue  # different column / no real collision
+            vertical_limit = min(vertical_limit, obstacle.y0 - 1.0)
+        # Prefer never overlapping the block below; keep at least ~one line so a
+        # degenerate slot falls through to the fit search (which may shrink or
+        # leave the block unplaced) rather than producing a zero-height box.
+        rect.y1 = max(source_rect.y0 + 10.0, min(rect.y1, vertical_limit))
+
     candidate_rects = _candidate_layout_rects(
         page,
         block,
@@ -324,7 +377,11 @@ def _fit_and_write_block(
                     color=block.style.color_rgb,
                     lineheight=candidate_line_height,
                 )
-                if spare >= -0.5:
+                # Require a genuine fit (non-negative spare). ``insert_textbox``
+                # renders NOTHING when the text overflows even slightly, so a
+                # lenient threshold here would "place" text that then silently
+                # vanishes at write time — accept only sizes that truly fit.
+                if spare >= 0.0:
                     placed_size = candidate_size
                     placed_line_height = candidate_line_height
                     placed_rect = candidate_rect
@@ -341,31 +398,72 @@ def _fit_and_write_block(
             f"⚠️  block {block.block_id} ({block.kind}) p{block.page_index + 1}: "
             f"translation could not fit at readable size — UNPLACED, source kept: {snippet!r}"
         )
-        return "unplaced"
+        return "unplaced", None
 
-    # Remove source text only after the replacement has passed a dry-run fit check.
+    # Resolve the redaction rectangle now, but do NOT mutate the page here.
     # Some extracted line boxes overlap vertically; keep protected-only contact
     # details out of the redaction rectangle so they remain exact.
     redaction_rect = _redaction_rect_avoiding(source_rect, protected_rects or [])
     if redaction_rect.width < 1.0 or redaction_rect.height < 1.0:
-        return "unplaced"
-    page.add_redact_annot(redaction_rect, fill=None)
+        return "unplaced", None
+    plan = _BlockWritePlan(
+        redaction_rect=redaction_rect,
+        placed_rect=placed_rect,
+        render_text=render_text,
+        fontname=fontname,
+        fontfile=fontfile,
+        fontsize=placed_size,
+        line_height=placed_line_height,
+        color=block.style.color_rgb,
+    )
+    return "fit", plan
+
+
+def _apply_block_plan(page: fitz.Page, plan: _BlockWritePlan) -> None:
+    """Redact the source region for a single planned block and draw its text."""
+    page.add_redact_annot(plan.redaction_rect, fill=None)
     page.apply_redactions(
         images=getattr(fitz, "PDF_REDACT_IMAGE_NONE", 0),
         graphics=getattr(fitz, "PDF_REDACT_LINE_ART_NONE", 0),
         text=getattr(fitz, "PDF_REDACT_TEXT_REMOVE", 0),
     )
     page.insert_textbox(
-        placed_rect,
-        render_text,
-        fontname=fontname,
-        fontfile=fontfile,
-        fontsize=placed_size,
-        color=block.style.color_rgb,
+        plan.placed_rect,
+        plan.render_text,
+        fontname=plan.fontname,
+        fontfile=plan.fontfile,
+        fontsize=plan.fontsize,
+        color=plan.color,
         align=fitz.TEXT_ALIGN_LEFT,
-        lineheight=placed_line_height,
+        lineheight=plan.line_height,
         overlay=True,
     )
+
+
+def _fit_and_write_block(
+    page: fitz.Page,
+    block: ExtractedTextBlock,
+    translated: str,
+    protected_rects: list[fitz.Rect] | None = None,
+    obstacle_rects: list[fitz.Rect] | None = None,
+) -> str:
+    """Plan and write one block in isolation (redact + insert immediately).
+
+    Kept for single-block callers/tests. The batch path in
+    :func:`translate_pdf_direct` must instead plan every block first, apply all
+    redactions per page, and only then insert text — otherwise a later block's
+    redaction erases text already placed for an earlier overlapping block.
+    """
+    status, plan = _plan_block_write(
+        page,
+        block,
+        translated,
+        protected_rects=protected_rects,
+        obstacle_rects=obstacle_rects,
+    )
+    if status != "fit" or plan is None:
+        return status
+    _apply_block_plan(page, plan)
     return "fit"
 
 
@@ -471,24 +569,53 @@ def translate_pdf_direct(
         translated_count = 0
         truncated_count = 0
         unplaced_count = 0
+        # Phase 1: plan every block's placement without touching the page, and
+        # queue redaction annotations. Text is inserted only in phase 2, after
+        # all redactions for a page have been applied — otherwise a later block's
+        # redaction would erase text already placed for an earlier overlapping
+        # block (adjacent line boxes overlap), silently blanking the output.
+        plans_by_page: dict[int, list[_BlockWritePlan]] = {}
         for block in blocks:
             translated = translated_map.get(block.block_id)
             if not translated:
                 continue
             page = doc[block.page_index]
-            status = _fit_and_write_block(
+            status, plan = _plan_block_write(
                 page,
                 block,
                 translated,
                 protected_rects=protected_rects_by_page.get(block.page_index),
                 obstacle_rects=obstacle_rects_by_page.get(block.page_index),
             )
-            if status == "fit":
+            if status == "fit" and plan is not None:
                 translated_count += 1
-            if status == "truncated":
-                truncated_count += 1
+                plans_by_page.setdefault(block.page_index, []).append(plan)
+                page.add_redact_annot(plan.redaction_rect, fill=None)
             elif status == "unplaced":
                 unplaced_count += 1
+
+        # Phase 2: apply all redactions for a page in one pass, then draw text.
+        for page_index, page in enumerate(doc):
+            page_plans = plans_by_page.get(page_index)
+            if not page_plans:
+                continue
+            page.apply_redactions(
+                images=getattr(fitz, "PDF_REDACT_IMAGE_NONE", 0),
+                graphics=getattr(fitz, "PDF_REDACT_LINE_ART_NONE", 0),
+                text=getattr(fitz, "PDF_REDACT_TEXT_REMOVE", 0),
+            )
+            for plan in page_plans:
+                page.insert_textbox(
+                    plan.placed_rect,
+                    plan.render_text,
+                    fontname=plan.fontname,
+                    fontfile=plan.fontfile,
+                    fontsize=plan.fontsize,
+                    color=plan.color,
+                    align=fitz.TEXT_ALIGN_LEFT,
+                    lineheight=plan.line_height,
+                    overlay=True,
+                )
         if translate_image_text:
             print("Translating text embedded in images...")
             image_stats = translate_pdf_image_text(

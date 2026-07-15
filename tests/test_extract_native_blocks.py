@@ -203,6 +203,25 @@ class ExtractNativeBlocksTests(unittest.TestCase):
         right = _block(2, 40, 114, 260, 126, "https://doi.org/10.1000/test")
         self.assertFalse(_can_merge_lines(left, right, multi_column=False))
 
+    def test_merges_paragraph_lines_with_overlapping_bboxes(self) -> None:
+        # Tightly-leaded body text: the second line's top sits above the first
+        # line's bbox bottom (a mildly negative vertical gap). These are the same
+        # paragraph and must still merge, otherwise each line is translated and
+        # sized on its own (fragments + inconsistent font sizes).
+        first = _block(1, 40, 100.0, 260, 118.0, "bioeconomy related research and")
+        second = _block(2, 40, 115.0, 260, 133.0, "development, piloting activities.")
+        object.__setattr__(second, "raw_block_id", first.raw_block_id)
+        self.assertLess(second.bbox[1] - first.bbox[3], 0.0)  # overlapping bboxes
+        self.assertTrue(_can_merge_lines(first, second, multi_column=False))
+
+    def test_still_rejects_near_full_height_overlap(self) -> None:
+        # Near-total vertical overlap means side-by-side spans, not stacked
+        # paragraph lines — must not merge even though x-ranges overlap.
+        first = _block(1, 40, 100.0, 260, 118.0, "left hand column text here")
+        second = _block(2, 40, 101.0, 260, 119.0, "practically the same row")
+        object.__setattr__(second, "raw_block_id", first.raw_block_id)
+        self.assertFalse(_can_merge_lines(first, second, multi_column=False))
+
 
 if __name__ == "__main__":
     unittest.main()
