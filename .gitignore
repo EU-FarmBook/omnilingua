@@ -231,3 +231,6 @@ playwright/.cache/
 test-results/
 playwright-report/
 playwright/.auth/
+
+
+ARCHITECTURE.md

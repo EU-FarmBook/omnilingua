@@ -348,6 +348,7 @@ omnilingua/
 │       ├── pdf_content_policy.py        # formula/equation-heavy PDF rejection
 │       ├── protected_text.py            # URL/email/@handle token protection
 │       ├── fonts.py                     # glyph-aware font fallback
+│       ├── language_metrics.py          # measured EN→target text expansion factors
 │       ├── translator_factory.py        # backend selection
 │       ├── translator_llm.py            # OpenAI-compatible backend (+ HTML node translation)
 │       ├── translator_deepl.py          # DeepL backend
