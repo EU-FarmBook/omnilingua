@@ -17,8 +17,10 @@ from app.pipeline.protected_text import (
     restore_protected_text,
 )
 from app.pipeline.translate_pdf_direct import (
+    _BlockWritePlan,
     _capture_page_links,
     _fit_and_write_block,
+    _harmonize_plan_font_sizes,
     _restore_page_links,
     translate_pdf_direct,
 )
@@ -241,6 +243,51 @@ class DirectPipelineHelperTests(unittest.TestCase):
                 self.assertIn("rivera@agro-alimentarias.coop", text)
             finally:
                 translated.close()
+
+    def test_harmonize_pulls_siblings_to_one_size_but_spares_outlier(self) -> None:
+        def plan(size: float, key: tuple) -> _BlockWritePlan:
+            return _BlockWritePlan(
+                redaction_rect=fitz.Rect(0, 0, 1, 1),
+                placed_rect=fitz.Rect(0, 0, 1, 1),
+                render_text="x",
+                fontname="helv",
+                fontfile=None,
+                fontsize=size,
+                line_height=1.1,
+                color=(0, 0, 0),
+                harmonize_key=key,
+            )
+
+        body = ("body", 0, 10)
+        plans = {
+            0: [plan(10.0, body), plan(10.0, body), plan(9.5, body), plan(6.5, body)],
+        }
+        out = _harmonize_plan_font_sizes(plans)[0]
+        sizes = [round(p.fontsize, 2) for p in out]
+        # Median of [10,10,9.5,6.5] = 9.75; floor = 9.75*0.85 = 8.29; group min = 6.5;
+        # target = max(6.5, 8.29) = 8.29. The three >=8.29 collapse to it; the 6.5
+        # dense outlier is left untouched (it cannot reach the shared size).
+        self.assertEqual(sizes.count(round(9.75 * 0.85, 2)), 3)
+        self.assertIn(6.5, sizes)
+
+    def test_harmonize_leaves_small_groups_untouched(self) -> None:
+        def plan(size: float, key: tuple) -> _BlockWritePlan:
+            return _BlockWritePlan(
+                redaction_rect=fitz.Rect(0, 0, 1, 1),
+                placed_rect=fitz.Rect(0, 0, 1, 1),
+                render_text="x",
+                fontname="helv",
+                fontfile=None,
+                fontsize=size,
+                line_height=1.1,
+                color=(0, 0, 0),
+                harmonize_key=key,
+            )
+
+        # Only two members — below the minimum for a shared size, left as-is.
+        plans = {0: [plan(11.0, ("caption", 1, 9)), plan(8.0, ("caption", 1, 9))]}
+        out = _harmonize_plan_font_sizes(plans)[0]
+        self.assertEqual(sorted(p.fontsize for p in out), [8.0, 11.0])
 
     def test_vertical_text_keeps_orientation_after_translation(self) -> None:
         class FakeTranslator:

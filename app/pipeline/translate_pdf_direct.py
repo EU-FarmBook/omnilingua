@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import statistics
+from collections import defaultdict
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -255,6 +257,69 @@ class _BlockWritePlan:
     color: tuple[float, float, float]
     align: int = fitz.TEXT_ALIGN_LEFT
     rotate: int = 0
+    # Identifies sibling blocks that should share one font size (see
+    # ``_harmonize_plan_font_sizes``). Empty tuple opts a plan out of harmony.
+    harmonize_key: tuple = ()
+
+
+# Block kinds that read as one visual "body" text stream and should be sized
+# together regardless of the paragraph/line/bullet distinction.
+_BODY_KINDS = frozenset({"paragraph", "line", "bullet", "label"})
+# A group needs at least this many members before a shared size is meaningful.
+_HARMONIZE_MIN_MEMBERS = 3
+# The shared size is never dragged below this fraction of the group's median
+# fitting size, so one dense outlier cannot shrink an entire column.
+_HARMONIZE_MEDIAN_FLOOR = 0.85
+
+
+def _harmonize_key(block: ExtractedTextBlock) -> tuple:
+    kind_class = "body" if block.kind in _BODY_KINDS else block.kind
+    if block.rotation:
+        # Rotated text is sized against a different axis; never pool it with
+        # horizontal body text.
+        return ()
+    return (block.column_index, kind_class, round(block.style.font_size))
+
+
+def _harmonize_plan_font_sizes(
+    plans_by_page: dict[int, list[_BlockWritePlan]],
+) -> dict[int, list[_BlockWritePlan]]:
+    """Give sibling blocks one shared font size instead of many independent ones.
+
+    Each block's own fit search picks the largest size *it* can use, which leaves
+    a page looking patchy: a dense paragraph drops to 8pt while the short one
+    beside it stays at 11pt. Here, blocks sharing a ``harmonize_key`` are pulled
+    down to a common target — the group's smallest fitting size, but never below
+    ``_HARMONIZE_MEDIAN_FLOOR`` of its median, so a single dense block becomes the
+    lone exception rather than forcing the whole group tiny. Sizes only ever
+    shrink, so a harmonized block still fits the box its larger size fit.
+    """
+    groups: dict[tuple, list[_BlockWritePlan]] = defaultdict(list)
+    for page_plans in plans_by_page.values():
+        for plan in page_plans:
+            if plan.harmonize_key:
+                groups[plan.harmonize_key].append(plan)
+
+    targets: dict[tuple, float] = {}
+    for key, members in groups.items():
+        if len(members) < _HARMONIZE_MIN_MEMBERS:
+            continue
+        sizes = [plan.fontsize for plan in members]
+        floor = statistics.median(sizes) * _HARMONIZE_MEDIAN_FLOOR
+        targets[key] = max(min(sizes), floor)
+
+    if not targets:
+        return plans_by_page
+
+    return {
+        page_index: [
+            replace(plan, fontsize=round(targets[plan.harmonize_key], 2))
+            if plan.harmonize_key in targets and plan.fontsize > targets[plan.harmonize_key]
+            else plan
+            for plan in page_plans
+        ]
+        for page_index, page_plans in plans_by_page.items()
+    }
 
 
 def _plan_block_write(
@@ -445,6 +510,7 @@ def _plan_block_write(
         color=block.style.color_rgb,
         align=align,
         rotate=rotation,
+        harmonize_key=_harmonize_key(block),
     )
     return "fit", plan
 
@@ -644,6 +710,11 @@ def translate_pdf_direct(
                 )
                 if status == "unplaced":
                     unplaced_count += 1
+
+        # Harmonize font sizes across sibling blocks before anything is drawn, so
+        # a column of body text renders at one consistent size instead of each
+        # block independently shrinking to whatever it happened to need.
+        plans_by_page = _harmonize_plan_font_sizes(plans_by_page)
 
         # Queue redactions only now that every preserved-source rect is known,
         # shrinking each redaction away from text that must survive. If trimming

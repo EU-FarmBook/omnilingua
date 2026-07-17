@@ -22,6 +22,7 @@ This project supports:
 - [TESTING.md](./TESTING.md) — test levels and commands
 - [docs/flow-technical.html](./docs/flow-technical.html) — visual end-to-end pipeline walkthrough (open in a browser)
 - [docs/omnilingua_qna.html](./docs/omnilingua_qna.html) — internal Q&A / FAQ about how the service works
+- [docs/text-expansion-study.html](./docs/text-expansion-study.html) — measured English→24-EU-language text expansion factors, and the sibling-group font harmonization they motivated (with before/after results)
 
 ## Features
 
@@ -36,6 +37,7 @@ This project supports:
   - column-aware ordering
   - conservative scholarly block classification
   - stronger glyph fallback
+  - sibling-group font harmonization (consistent size for same-role text; preserves source hierarchy)
 - Modular app structure (`app/api`, `app/services`, `app/pipeline`)
 - Unit and regression test entrypoints
 

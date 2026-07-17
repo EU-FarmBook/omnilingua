@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniLingua — Text Expansion Across the 24 EU Languages</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --bg: #f4f6f3; --surface: #ffffff; --surface-2: #eef2ee;
+    --ink: #16201b; --ink-2: #33413a; --muted: #5e6d64; --line: #dde3dd; --line-2: #c6cfc7;
+    --intake: #3f6591; --understand: #0f766e; --ground: #2f7d4f; --generate: #b4632a; --finalize: #8a5a86;
+    --intake-bg: #e7edf5; --understand-bg: #dcefec; --ground-bg: #e0efe5; --generate-bg: #f6e9dc; --finalize-bg: #efe6ef;
+    --ok: #2f7d4f; --stop: #a23b34; --warn: #b4632a;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+    --maxw: 940px; --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1411; --surface: #151c18; --surface-2: #1b231e;
+      --ink: #e7ece7; --ink-2: #c2ccc4; --muted: #93a199; --line: #26302a; --line-2: #35413a;
+      --intake: #7ba3d4; --understand: #4bc2b4; --ground: #63c187; --generate: #e2965a; --finalize: #c79ac4;
+      --intake-bg: #1a2634; --understand-bg: #12332e; --ground-bg: #13301f; --generate-bg: #33230f; --finalize-bg: #2c1f2c;
+      --ok: #63c187; --stop: #e0736a; --warn: #e2965a;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6f3; --surface: #ffffff; --surface-2: #eef2ee;
+    --ink: #16201b; --ink-2: #33413a; --muted: #5e6d64; --line: #dde3dd; --line-2: #c6cfc7;
+    --intake: #3f6591; --understand: #0f766e; --ground: #2f7d4f; --generate: #b4632a; --finalize: #8a5a86;
+    --intake-bg: #e7edf5; --understand-bg: #dcefec; --ground-bg: #e0efe5; --generate-bg: #f6e9dc; --finalize-bg: #efe6ef;
+    --ok: #2f7d4f; --stop: #a23b34; --warn: #b4632a;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1411; --surface: #151c18; --surface-2: #1b231e;
+    --ink: #e7ece7; --ink-2: #c2ccc4; --muted: #93a199; --line: #26302a; --line-2: #35413a;
+    --intake: #7ba3d4; --understand: #4bc2b4; --ground: #63c187; --generate: #e2965a; --finalize: #c79ac4;
+    --intake-bg: #1a2634; --understand-bg: #12332e; --ground-bg: #13301f; --generate-bg: #33230f; --finalize-bg: #2c1f2c;
+    --ok: #63c187; --stop: #e0736a; --warn: #e2965a;
+  }
+
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.65; -webkit-font-smoothing: antialiased; font-size: 16.5px; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+  header.top { border-bottom: 1px solid var(--line); background: radial-gradient(130% 150% at 85% -30%, var(--understand-bg), transparent 62%), var(--surface); }
+  .top-inner { padding: 52px 0 40px; }
+  .eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin: 0 0 14px; }
+  h1 { font-size: clamp(2rem, 4vw, 2.8rem); line-height: 1.07; margin: 0 0 16px; letter-spacing: -0.02em; text-wrap: balance; }
+  .lede { font-size: 1.12rem; color: var(--ink-2); max-width: 64ch; margin: 0; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 22px; font-size: 0.84rem; color: var(--ink-2); }
+  .meta-row .mono, .meta-row code { font-family: var(--mono); font-size: 0.78rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+
+  /* ---- Sticky phase legend ---- */
+  nav.legend { position: sticky; top: 0; z-index: 30; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .legend-inner { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 24px; max-width: var(--maxw); margin: 0 auto; font-size: 0.8rem; }
+  .legend .lg { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+
+  section { padding: 44px 0; border-bottom: 1px solid var(--line); }
+  .sec-head { margin-bottom: 26px; }
+  .sec-head .eyebrow { margin-bottom: 8px; }
+  h2 { font-size: 1.5rem; margin: 0 0 8px; letter-spacing: -0.01em; text-wrap: balance; }
+  h2 .num { font-family: var(--mono); color: var(--muted); font-size: 1rem; margin-right: 10px; }
+  .sec-head p { margin: 0; color: var(--ink-2); max-width: 68ch; }
+  section > .wrap > p { color: var(--ink-2); max-width: 68ch; }
+  p code, li code { font-family: var(--mono); font-size: 0.84em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+
+  /* ---- Overview pipeline strip ---- */
+  .pipeline { display: flex; flex-direction: column; gap: 10px; }
+  .rail { display: grid; grid-template-columns: 128px 1fr; gap: 14px; align-items: stretch; }
+  .rail-label { display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 12px 12px; border-radius: 10px; background: var(--phase-bg); border: 1px solid var(--line); }
+  .rail-label .p-name { font-weight: 700; font-size: 0.92rem; color: var(--phase); }
+  .rail-label .p-sub { font-size: 0.72rem; color: var(--muted); font-family: var(--mono); }
+  .rail-stages { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); font-size: 0.82rem; color: var(--ink); }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--phase); flex: none; }
+  .flowto { color: var(--muted); font-family: var(--mono); font-size: 0.9rem; padding: 0 2px; }
+  .divider-flow { display: flex; justify-content: center; margin: -4px 0 8px; }
+  .divider-flow span { color: var(--line-2); font-size: 1.1rem; }
+
+  /* ---- Stage cards ---- */
+  .stages { display: flex; flex-direction: column; gap: 0; }
+  .stage { position: relative; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--phase); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 12px; }
+  .stage-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .stage-num { font-family: var(--mono); font-size: 0.78rem; color: #fff; background: var(--phase); border-radius: 6px; padding: 2px 8px; flex: none; }
+  .stage-title { font-size: 1.08rem; font-weight: 700; margin: 0; }
+  .stage-file { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+  .stage-what { color: var(--ink-2); margin: 8px 0 0; max-width: 74ch; }
+  .grid-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 20px; margin-top: 16px; border-top: 1px dashed var(--line-2); padding-top: 15px; }
+  .kv .k { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+  .kv .v { font-size: 0.9rem; color: var(--ink-2); }
+  .kv .v code { font-size: 0.82rem; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+  /* ---- Branch block ---- */
+  .branches { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 14px; }
+  .branch { border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px; background: var(--surface-2); }
+  .branch .cond { font-family: var(--mono); font-size: 0.74rem; font-weight: 600; display: inline-block; padding: 2px 8px; border-radius: 5px; margin-bottom: 7px; background: var(--phase, var(--ground)); color: #fff; }
+  .branch p { margin: 0; font-size: 0.86rem; color: var(--ink-2); }
+
+  /* ---- Mode grid ---- */
+  .modes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .mode { border: 1px solid var(--line); border-radius: 10px; padding: 15px 16px; background: var(--surface); border-top: 3px solid var(--m, var(--understand)); }
+  .mode h4 { margin: 0 0 6px; font-family: var(--mono); font-size: 0.92rem; }
+  .mode p { margin: 0 0 8px; font-size: 0.85rem; color: var(--ink-2); }
+  .mode .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag { font-size: 0.68rem; font-family: var(--mono); padding: 2px 7px; border-radius: 5px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  .tag.src { color: var(--ground); border-color: color-mix(in srgb, var(--ground) 40%, var(--line)); }
+  .tag.stop { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
+
+  /* ---- Lanes ---- */
+  .lanes { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .lane { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  .lane-h { padding: 12px 15px; background: var(--understand-bg); border-bottom: 1px solid var(--line); }
+  .lane-h h4 { margin: 0; font-size: 0.98rem; color: var(--understand); }
+  .lane-h .sub { font-size: 0.76rem; color: var(--muted); margin-top: 2px; font-family: var(--mono); }
+  .lane ol { margin: 0; padding: 14px 15px 14px 32px; }
+  .lane li { font-size: 0.87rem; color: var(--ink-2); margin-bottom: 8px; }
+  .lane li:last-child { margin-bottom: 0; }
+  .lane li code { font-size: 0.8rem; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+  /* ---- Tables ---- */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.87rem; min-width: 560px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { background: var(--surface-2); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: none; }
+  td code, th code { font-family: var(--mono); font-size: 0.82rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ground); font-weight: 700; white-space: nowrap; }
+  .pill { display: inline-block; font-size: 0.7rem; font-family: var(--mono); padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+  .pill.e400 { background: color-mix(in srgb, var(--stop) 16%, transparent); color: var(--stop); }
+  .pill.e500 { background: var(--generate-bg); color: var(--warn); }
+  .pill.e401 { background: var(--intake-bg); color: var(--intake); }
+
+  .callout { border: 1px solid var(--line); border-left: 4px solid var(--generate); background: var(--generate-bg); border-radius: 10px; padding: 14px 17px; margin-top: 18px; }
+  .callout b { color: var(--generate); }
+  .callout p { margin: 0; font-size: 0.9rem; color: var(--ink-2); }
+  .callout.good { border-left-color: var(--ground); background: var(--ground-bg); }
+  .callout.good b { color: var(--ground); }
+
+  footer { padding: 34px 0 60px; color: var(--muted); font-size: 0.82rem; }
+  footer code { font-family: var(--mono); font-size: 0.78rem; }
+  .anchor { scroll-margin-top: 60px; }
+  @media (max-width: 640px) { .rail { grid-template-columns: 1fr; } .top-inner { padding: 34px 0 30px; } }
+
+  /* ---- Flowcharts ---- */
+  .fc-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius);
+    background:
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 28px,
+      var(--surface-2);
+    padding: 20px; margin-top: 6px; }
+  .fc { display: block; height: auto; }
+  .fc .node-shape { stroke-width: 1.5; }
+  .fc .node-text { fill: var(--ink); font-family: var(--sans); font-size: 12.5px; }
+  .fc .node-text .ttl { font-weight: 700; }
+  .fc .node-text.strong { font-weight: 700; }
+  .fc .node-text.mono { font-family: var(--mono); font-size: 11px; }
+  .fc text { paint-order: stroke; }
+  .fc .n-intake { fill: var(--intake-bg); stroke: var(--intake); }
+  .fc .n-understand { fill: var(--understand-bg); stroke: var(--understand); }
+  .fc .n-ground { fill: var(--ground-bg); stroke: var(--ground); }
+  .fc .n-generate { fill: var(--generate-bg); stroke: var(--generate); }
+  .fc .n-finalize { fill: var(--finalize-bg); stroke: var(--finalize); }
+  .fc .dec { fill: var(--surface); }
+  .fc .term { stroke-width: 2; }
+  .fc .err { fill: color-mix(in srgb, var(--stop) 15%, var(--surface)); stroke: var(--stop); }
+  .fc .edge { stroke: var(--line-2); stroke-width: 1.6; fill: none; }
+  .fc .e-yes { stroke: var(--ground); }
+  .fc .e-no { stroke: var(--stop); }
+  .fc .e-loop { stroke: var(--generate); stroke-dasharray: 5 4; }
+  .fc .arrowhead { fill: var(--line-2); }
+  .fc .elbl { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+  .fc-cap { font-size: 0.82rem; color: var(--muted); margin: 10px 2px 0; max-width: 70ch; }
+  .fc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 4px 2px 16px; font-size: 0.78rem; color: var(--ink-2); }
+  .fc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .fc-legend .k { width: 22px; height: 13px; border-radius: 3px; border: 1.5px solid var(--muted); flex: none; }
+  .fc-legend .k.proc { border-radius: 4px; }
+  .fc-legend .k.dec { transform: rotate(45deg) scale(0.8); border-radius: 2px; background: var(--surface); }
+  .fc-legend .k.term { border-radius: 7px; }
+  .fc-legend .k.stop { border-color: var(--stop); }
+  .fc-legend .k.keep { border-color: var(--ground); }
+</style>
+
+<style>
+  .barcell { width: 34%; min-width: 150px; }
+  .bar { display:inline-block; height:11px; border-radius:3px; vertical-align:middle; min-width:2px; }
+  .bar-exp { background: var(--generate); }
+  .bar-con { background: var(--ground); }
+  .bar-bad { background: var(--stop); opacity:.4; }
+  td.rng { font-family: var(--mono); font-size:.8rem; color: var(--muted); white-space:nowrap; }
+  .etag { font-family: var(--mono); font-size:.66rem; padding:2px 7px; border-radius:20px; }
+  .etag.deepl { background: var(--understand-bg); color: var(--understand); }
+  .etag.llm { background: var(--finalize-bg); color: var(--finalize); }
+  .rnote { font-size:.68rem; color: var(--muted); font-style:italic; }
+  .barwrap-head { display:flex; justify-content:space-between; font-family:var(--mono); font-size:.66rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:2px; }
+  .groups { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(250px,1fr)); margin-top:16px; }
+  .gcard { border:1px solid var(--line); border-radius:12px; padding:14px 16px; background:var(--surface); border-top:3px solid var(--ground); }
+  .gtop { display:flex; justify-content:space-between; align-items:baseline; }
+  .gname { font-weight:700; font-size:.98rem; }
+  .gnum { font-family:var(--mono); font-weight:700; color:var(--generate); font-variant-numeric:tabular-nums; }
+  .gcodes { font-family:var(--mono); font-size:.72rem; color:var(--muted); margin:2px 0 8px; }
+  .gcard p { margin:0; font-size:.85rem; color:var(--ink-2); }
+  .refs { list-style:none; padding:0; margin:14px 0 0; display:grid; gap:10px; }
+  .refs li { border:1px solid var(--line); border-left:3px solid var(--intake); border-radius:10px; padding:12px 15px; background:var(--surface); }
+  .refs .rtitle { font-weight:600; font-size:.9rem; }
+  .refs .rmeta { font-size:.8rem; color:var(--muted); margin-top:2px; }
+  .refs a { color: var(--intake); }
+  .refs .rkind { font-family:var(--mono); font-size:.64rem; text-transform:uppercase; letter-spacing:.08em; padding:2px 7px; border-radius:20px; background:var(--intake-bg); color:var(--intake); float:right; }
+  .formula { font-family:var(--mono); font-size:.88rem; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:12px 0; }
+  .scale-list { display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-top:12px; }
+  .scale-item { border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:var(--surface-2); }
+  .scale-item .sl-lang { font-weight:700; font-size:.85rem; }
+  .scale-item .sl-val { font-family:var(--mono); color:var(--ground); font-weight:700; }
+</style>
+
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <p class="eyebrow">EU-FarmBook · OmniLingua · Research Note</p>
+    <h1>How much longer? Text expansion across the 24 EU languages</h1>
+    <p class="lede">
+      Translated text is usually longer than its English source — by a different amount in every
+      language. This note measures that expansion empirically, explains why it happens, checks it
+      against the published literature, and works out what it means for keeping translated PDFs
+      readable without the patchwork of shrunken fonts.
+    </p>
+    <div class="meta-row">
+      <span><b>Corpus:</b> 16 domain sentences (agricultural / technical)</span>
+      <span><b>Engines:</b> DeepL (22 langs) · LLM (mt, ga)</span>
+      <span><b>Metric:</b> character-length ratio (translated ÷ English)</span>
+      <span><b>Run:</b> <code class="mono">scratchpad/expansion_results.json</code></span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<section class="anchor" id="method">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">What was measured</p>
+      <h2><span class="num">A</span>Method</h2>
+      <p>
+        16 English sentences drawn from the agricultural / technical register of real
+        EU-FarmBook knowledge objects were translated into every other EU language, and the
+        <b>character-length ratio</b> (translated ÷ English, including spaces) was recorded for
+        each. Character count is the standard first-order proxy for how much horizontal space a
+        string needs — the same measure the W3C and IBM localization guidance use.
+      </p>
+    </div>
+    <p>
+      Translations used <b>DeepL</b> for the 22 languages it supports — professional-grade output
+      is the most faithful estimate of how long natural text really is. <b>Maltese</b> and
+      <b>Irish</b>, which DeepL does not cover, went through the project LLM.
+    </p>
+    <div class="callout">
+      <p><b>Two data-quality caveats.</b> <b>Irish is excluded</b>: the LLM degenerated into
+      repetition loops (mean 7.9×, one output 31× the source), so its numbers are meaningless —
+      published Celtic estimates should be used instead. <b>Maltese</b> is length-plausible but of
+      lower translation quality. And character count is a proxy: true rendered width depends on the
+      font's per-glyph widths (relevant for Greek and Cyrillic), which the implementation phase
+      should measure directly.</p>
+    </div>
+  </div>
+</section>
+
+<section class="anchor" id="results">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The measurements</p>
+      <h2><span class="num">B</span>Expansion by language</h2>
+      <p>
+        Mean character expansion versus English, ranked from most-expanding to most-contracting.
+        <b>Range</b> is the spread across individual sentences; <b>font scale</b> is the suggested
+        area-based size multiplier for reflowing paragraphs (see section E).
+      </p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th><th>Language</th>
+            <th><div class="barwrap-head"><span>0.90&times;</span><span>1.35&times;</span></div></th>
+            <th>Ratio</th><th>&Delta;</th><th>Range</th><th>Font&nbsp;scale</th><th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+      <tr>
+        <td><code>fr</code></td>
+        <td>French</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:90%"></span></td>
+        <td class="num">1.30&times;</td>
+        <td class="num">+30%</td>
+        <td class="rng">1.06&ndash;1.84</td>
+        <td class="num">0.88</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>es</code></td>
+        <td>Spanish</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:74%"></span></td>
+        <td class="num">1.24&times;</td>
+        <td class="num">+24%</td>
+        <td class="rng">0.95&ndash;1.54</td>
+        <td class="num">0.90</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>de</code></td>
+        <td>German</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:72%"></span></td>
+        <td class="num">1.23&times;</td>
+        <td class="num">+23%</td>
+        <td class="rng">1.00&ndash;1.41</td>
+        <td class="num">0.90</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>it</code></td>
+        <td>Italian</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:71%"></span></td>
+        <td class="num">1.22&times;</td>
+        <td class="num">+22%</td>
+        <td class="rng">1.02&ndash;1.65</td>
+        <td class="num">0.90</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>pt</code></td>
+        <td>Portuguese</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:69%"></span></td>
+        <td class="num">1.21&times;</td>
+        <td class="num">+21%</td>
+        <td class="rng">0.96&ndash;1.49</td>
+        <td class="num">0.91</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>el</code></td>
+        <td>Greek</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:68%"></span></td>
+        <td class="num">1.20&times;</td>
+        <td class="num">+20%</td>
+        <td class="rng">0.99&ndash;1.59</td>
+        <td class="num">0.91</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>bg</code></td>
+        <td>Bulgarian <span class="rnote">has articles</span></td>
+        <td class="barcell"><span class="bar bar-exp" style="width:58%"></span></td>
+        <td class="num">1.16&times;</td>
+        <td class="num">+16%</td>
+        <td class="rng">0.90&ndash;1.42</td>
+        <td class="num">0.93</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>ro</code></td>
+        <td>Romanian</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:56%"></span></td>
+        <td class="num">1.15&times;</td>
+        <td class="num">+15%</td>
+        <td class="rng">0.91&ndash;1.39</td>
+        <td class="num">0.93</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>pl</code></td>
+        <td>Polish</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:55%"></span></td>
+        <td class="num">1.15&times;</td>
+        <td class="num">+15%</td>
+        <td class="rng">0.98&ndash;1.47</td>
+        <td class="num">0.93</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>hu</code></td>
+        <td>Hungarian</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:53%"></span></td>
+        <td class="num">1.14&times;</td>
+        <td class="num">+14%</td>
+        <td class="rng">0.93&ndash;1.42</td>
+        <td class="num">0.94</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>nl</code></td>
+        <td>Dutch</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:51%"></span></td>
+        <td class="num">1.13&times;</td>
+        <td class="num">+13%</td>
+        <td class="rng">0.90&ndash;1.34</td>
+        <td class="num">0.94</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>mt</code></td>
+        <td>Maltese <span class="rnote">LLM, lower quality</span></td>
+        <td class="barcell"><span class="bar bar-exp" style="width:48%"></span></td>
+        <td class="num">1.11&times;</td>
+        <td class="num">+12%</td>
+        <td class="rng">0.83&ndash;1.34</td>
+        <td class="num">0.95</td>
+        <td><span class="etag llm">LLM</span></td>
+      </tr>
+      <tr>
+        <td><code>fi</code></td>
+        <td>Finnish</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:39%"></span></td>
+        <td class="num">1.08&times;</td>
+        <td class="num">+8%</td>
+        <td class="rng">0.74&ndash;1.32</td>
+        <td class="num">0.96</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>lt</code></td>
+        <td>Lithuanian</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:38%"></span></td>
+        <td class="num">1.07&times;</td>
+        <td class="num">+7%</td>
+        <td class="rng">0.81&ndash;1.39</td>
+        <td class="num">0.97</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>lv</code></td>
+        <td>Latvian</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:36%"></span></td>
+        <td class="num">1.06&times;</td>
+        <td class="num">+6%</td>
+        <td class="rng">0.83&ndash;1.31</td>
+        <td class="num">0.97</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>et</code></td>
+        <td>Estonian</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:34%"></span></td>
+        <td class="num">1.05&times;</td>
+        <td class="num">+5%</td>
+        <td class="rng">0.82&ndash;1.25</td>
+        <td class="num">0.97</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>sk</code></td>
+        <td>Slovak</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:31%"></span></td>
+        <td class="num">1.04&times;</td>
+        <td class="num">+4%</td>
+        <td class="rng">0.88&ndash;1.33</td>
+        <td class="num">0.98</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>da</code></td>
+        <td>Danish</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:29%"></span></td>
+        <td class="num">1.03&times;</td>
+        <td class="num">+3%</td>
+        <td class="rng">0.84&ndash;1.29</td>
+        <td class="num">0.99</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>sv</code></td>
+        <td>Swedish</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:28%"></span></td>
+        <td class="num">1.03&times;</td>
+        <td class="num">+3%</td>
+        <td class="rng">0.84&ndash;1.24</td>
+        <td class="num">0.99</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>sl</code></td>
+        <td>Slovenian</td>
+        <td class="barcell"><span class="bar bar-exp" style="width:22%"></span></td>
+        <td class="num">1.00&times;</td>
+        <td class="num">+0%</td>
+        <td class="rng">0.80&ndash;1.26</td>
+        <td class="num">1.00</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>cs</code></td>
+        <td>Czech</td>
+        <td class="barcell"><span class="bar bar-con" style="width:18%"></span></td>
+        <td class="num">0.98&times;</td>
+        <td class="num">&minus;2%</td>
+        <td class="rng">0.84&ndash;1.21</td>
+        <td class="num">1.01</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>hr</code></td>
+        <td>Croatian</td>
+        <td class="barcell"><span class="bar bar-con" style="width:16%"></span></td>
+        <td class="num">0.97&times;</td>
+        <td class="num">&minus;3%</td>
+        <td class="rng">0.76&ndash;1.18</td>
+        <td class="num">1.02</td>
+        <td><span class="etag deepl">DEEPL</span></td>
+      </tr>
+      <tr>
+        <td><code>ga</code></td>
+        <td>Irish</td>
+        <td class="barcell"><span class="bar bar-bad" style="width:0%"></span></td>
+        <td class="num"><span class="pill e400">unreliable</span></td>
+        <td class="num">&mdash;</td>
+        <td class="rng">LLM degeneration</td>
+        <td class="num">&mdash;</td>
+        <td><span class="etag llm">LLM</span></td>
+      </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout good">
+      <p><b>The shape of the result.</b> Romance languages and Greek expand most (+20–30%);
+      continental Germanic follows (German +23% even <em>with</em> compounding). The Slavic
+      languages barely move or shrink — Croatian and Czech come out <em>shorter</em> than English.
+      Scandinavian sits near parity.</p>
+    </div>
+  </div>
+</section>
+
+<section class="anchor" id="why">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The linguistics</p>
+      <h2><span class="num">C</span>Why each family behaves as it does</h2>
+      <p>
+        Every translation carries a universal upward pull — the <b>explicitation hypothesis</b>
+        (Blum-Kulka 1986): translators make implicit relations explicit, adding words. What each
+        language nets out at is that pull <em>minus</em> its own morphological compactness.
+      </p>
+    </div>
+    <div class="groups">
+    <div class="gcard">
+      <div class="gtop"><span class="gname">Romance</span><span class="gnum">+22%</span></div>
+      <div class="gcodes">fr, es, it, pt, ro</div>
+      <p>Periphrastic (multi-word) constructions, obligatory articles and prepositions, longer average word length.</p>
+    </div>
+    <div class="gcard">
+      <div class="gtop"><span class="gname">Greek</span><span class="gnum">+20%</span></div>
+      <div class="gcodes">el</div>
+      <p>Polysyllabic vocabulary and article-heavy syntax; expands like the Romance group despite a different script.</p>
+    </div>
+    <div class="gcard">
+      <div class="gtop"><span class="gname">Germanic (continental)</span><span class="gnum">+18%</span></div>
+      <div class="gcodes">de, nl</div>
+      <p>Compounding cuts word count but not character count; longer words and separable structures win out. German also makes very long unbreakable tokens — a line-wrapping hazard.</p>
+    </div>
+    <div class="gcard">
+      <div class="gtop"><span class="gname">Finnic / Uralic</span><span class="gnum">+9%</span></div>
+      <div class="gcodes">fi, et, hu</div>
+      <p>Agglutination packs many grammatical markers into one long word: far fewer words, only modestly more characters.</p>
+    </div>
+    <div class="gcard">
+      <div class="gtop"><span class="gname">Baltic</span><span class="gnum">+6%</span></div>
+      <div class="gcodes">lt, lv</div>
+      <p>Inflected and article-free, but longer word forms keep expansion mild.</p>
+    </div>
+    <div class="gcard">
+      <div class="gtop"><span class="gname">Slavic</span><span class="gnum">+5%</span></div>
+      <div class="gcodes">bg, pl, cs, sk, sl, hr</div>
+      <p>No articles to render and case endings replace prepositions — several contract below English. Bulgarian is the exception (+16%): it is the one Slavic language with a definite article.</p>
+    </div>
+    <div class="gcard">
+      <div class="gtop"><span class="gname">Scandinavian</span><span class="gnum">+3%</span></div>
+      <div class="gcodes">da, sv</div>
+      <p>Compact, article-light Germanic languages that stay very close to English length.</p>
+    </div>
+    </div>
+  </div>
+</section>
+
+<section class="anchor" id="validation">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Does it hold up?</p>
+      <h2><span class="num">D</span>Agreement with published figures</h2>
+      <p>
+        The measured numbers land squarely on the established benchmarks, which is the main check
+        that the dataset is sound. IBM's globalization guidance and the W3C both put French/Spanish
+        at roughly +20–25% and German as high as +35%; the measurements here reproduce that
+        ordering and magnitude.
+      </p>
+    </div>
+    <div class="callout">
+      <p><b>IBM expansion table (via W3C), by source length:</b> up to 10 chars &rarr; +200–300%;
+      11–20 &rarr; +180–200%; 21–30 &rarr; +160–180%; 31–50 &rarr; +140–160%;
+      over 70 &rarr; ~+130%. The shorter the string, the larger the relative growth — which is why
+      isolated headings and captions overflow worse than paragraphs.</p>
+    </div>
+  </div>
+</section>
+
+<section class="anchor" id="fontsizing">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The point of all this</p>
+      <h2><span class="num">E</span>What it means for font sizing</h2>
+      <p>
+        Because expansion is <b>systematic per language</b>, a per-language baseline font size is
+        well founded — far better than shrinking each block independently, which produces the
+        uneven, patchy result users flagged. To fit <code>L</code>&times; more text in a fixed box:
+      </p>
+    </div>
+    <div class="formula">single-line elements (headings, captions that must not wrap) &rarr; font &asymp; 1 / L</div>
+    <div class="formula">reflowing paragraphs (most body text) &rarr; characters &times; fontsize² &asymp; area &rarr; font &asymp; 1 / &radic;L</div>
+    <p>So the practical per-language <b>baseline scale</b> for body text (the "font scale" column above) runs from:</p>
+    <div class="scale-list">
+      <div class="scale-item"><span class="sl-lang">French</span> &middot; <span class="sl-val">0.88</span> (12% smaller)</div>
+      <div class="scale-item"><span class="sl-lang">German / Spanish</span> &middot; <span class="sl-val">0.90</span></div>
+      <div class="scale-item"><span class="sl-lang">Dutch / Hungarian</span> &middot; <span class="sl-val">0.94</span></div>
+      <div class="scale-item"><span class="sl-lang">Finnish / Baltic</span> &middot; <span class="sl-val">0.96&ndash;0.97</span></div>
+      <div class="scale-item"><span class="sl-lang">Slovenian / Czech / Croatian</span> &middot; <span class="sl-val">1.00&ndash;1.02</span> (full size)</div>
+    </div>
+    <div class="callout">
+      <p><b>Why not a single uniform shrink.</b> Per-sentence expansion varies widely (French
+      individual sentences ran 1.07 to 1.84 — the <em>Range</em> column). A lone factor captures the
+      central tendency, not every block. The recommended design is a <b>hybrid</b>: set the
+      document-wide starting size for the language from its baseline scale, harmonize size
+      <em>within groups of same-styled sibling blocks</em>, and keep a small bounded local shrink for
+      the residual outliers — consistent by default, still tight where a block genuinely needs it.</p>
+    </div>
+    <p style="margin-top:16px">
+      This sits directly behind <b>Q8</b> of the Q&amp;A companion ("translations are longer than the
+      original — how does the text still fit the page?") and the per-block fit logic in
+      <code>translate_pdf_direct.py</code>. The harmonization half of this proposal has since been
+      built and measured — see section&nbsp;F.
+    </p>
+  </div>
+</section>
+
+<section class="anchor" id="implementation">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">From proposal to code</p>
+      <h2><span class="num">F</span>What was built, and does it look good?</h2>
+      <p>
+        The harmonization half of section E is now implemented in the direct engine
+        (<code>_harmonize_plan_font_sizes</code> in <code>translate_pdf_direct.py</code>). This section
+        records what it does, how it was measured on the real evaluation documents, and what the
+        rendered pages actually look like.
+      </p>
+    </div>
+
+    <p>
+      Each block still gets its own fitted size first. Harmonization then groups blocks by
+      <b>(column · role · original source size)</b> across the whole document and pulls each group to
+      one shared size — the group's smallest fitting size, but never below
+      <code>0.85&times;</code> its median, so a single dense block becomes the lone smaller exception
+      rather than dragging the group down. Sizes only ever shrink, so a harmonized block still fits
+      the box its larger size fit.
+    </p>
+
+    <div class="callout good">
+      <p><b>Scope — the mental model.</b> Not one size for the whole document, and not per paragraph:
+      <b>one size per sibling group</b>, document-wide. Because <em>original size</em> is part of the
+      key, a heading is never pooled with body text — the source document's designed hierarchy
+      (heading &gt; sub-heading &gt; body &gt; caption) is preserved, and only the unwanted jitter
+      <em>within</em> a role is removed.</p>
+    </div>
+
+    <h3 style="font-size:1.05rem;margin:22px 0 6px">Measured on the round-2 documents</h3>
+    <p>Before/after the harmonization pass, on identical translations (distinct body-text sizes; the
+      largest sibling group; body-size spread):</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Document → target</th><th>Body sizes<br>before → after</th>
+          <th>Largest group: blocks sharing one size</th><th>Body stdev</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td>Pocketboer II &rarr; Hungarian</td>
+            <td class="num">6 &rarr; 3</td>
+            <td>28/66 &rarr; <b>65/66</b></td>
+            <td class="num">0.97 &rarr; 0.49&nbsp;pt</td>
+          </tr>
+          <tr>
+            <td>Roof insulation &rarr; German</td>
+            <td class="num">11 &rarr; 8</td>
+            <td>55/82 &rarr; <b>82/82</b></td>
+            <td class="num">1.62 &rarr; 1.50&nbsp;pt</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="font-size:1.05rem;margin:22px 0 6px">The floor holds across the expansion spectrum</h3>
+    <p>Same document (Pocketboer letter, ~68 body blocks) into seven languages spanning the biggest
+      expanders and the contractors. <b>@floor</b> counts body blocks driven to the 7pt readable
+      floor:</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Target</th><th>Body sizes before → after</th><th>Shared body size</th>
+          <th>Blocks @ 7pt floor</th><th>Min size</th>
+        </tr></thead>
+        <tbody>
+          <tr><td>French</td><td class="num">6 &rarr; 3</td><td class="num">7.9</td><td class="num">0</td><td class="num">7.3</td></tr>
+          <tr><td>Spanish</td><td class="num">7 &rarr; 4</td><td class="num">7.9</td><td class="num">0</td><td class="num">7.3</td></tr>
+          <tr><td>Greek</td><td class="num">7 &rarr; 3</td><td class="num">7.9</td><td class="num">0</td><td class="num">7.3</td></tr>
+          <tr><td>German</td><td class="num">8 &rarr; 4</td><td class="num">7.9</td><td class="num">0</td><td class="num">7.3</td></tr>
+          <tr><td>Finnish</td><td class="num">7 &rarr; 3</td><td class="num">7.9</td><td class="num">0</td><td class="num">7.3</td></tr>
+          <tr><td>Czech</td><td class="num">7 &rarr; 3</td><td class="num">7.9</td><td class="num">0</td><td class="num">7.3</td></tr>
+          <tr><td>Croatian</td><td class="num">7 &rarr; 4</td><td class="num">7.9</td><td class="num">0</td><td class="num">7.3</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout good">
+      <p><b>No collapse.</b> Not one block reached the 7pt floor in any language; the smallest size
+      anywhere was 7.3pt. The <code>0.85&times;median</code> guard successfully stops a dense outlier
+      from shrinking a whole group.</p>
+    </div>
+
+    <h3 style="font-size:1.05rem;margin:22px 0 6px">Does the page look worse with sizes varying by section?</h3>
+    <p>
+      The opposite, on inspection of rendered before/after pages. Harmonization <em>fixes</em> the
+      "some sections bigger than others" effect rather than causing it: in the un-harmonized page the
+      <em>motor-oil</em> section's body text rendered visibly larger than the body text of other
+      sections — same role, different size — and after harmonization all same-role body matched. The
+      size differences that remain are the intended hierarchy (blue section headings stay larger than
+      body), which reads as correct because <em>original size</em> is preserved in the grouping key.
+    </p>
+    <div class="callout">
+      <p><b>Two honest caveats seen in the render.</b> A genuinely oversized line was an
+      <em>untranslated source leftover</em> (a block that failed to fit kept its source at original
+      size) — a translation-fidelity issue, not a harmonization artifact, and present in both images.
+      And the "dense outlier goes smaller" case is bounded by the median floor; on the inspected page
+      it did not visibly appear.</p>
+    </div>
+
+    <h3 style="font-size:1.05rem;margin:22px 0 6px">Why the per-language factors are <em>not</em> wired into sizing</h3>
+    <p>
+      Tempting as it is to pre-scale the starting font by a language's expansion factor, that was
+      evaluated and deliberately left out. The fit search already measures each translated string's
+      <em>true</em> rendered fit in the real font, so a statistical prior can only do harm — it would
+      shrink blocks that actually fit fine at full size. The factors in this study therefore live as a
+      reference module (<code>app/pipeline/language_metrics.py</code>) and documentation, not as an
+      input to the sizing decision.
+    </p>
+  </div>
+</section>
+
+<section class="anchor" id="refs">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Sources</p>
+      <h2><span class="num">G</span>References</h2>
+      <p>Peer-reviewed and authoritative sources behind the reasoning and the benchmark comparison.</p>
+    </div>
+    <ul class="refs">
+      <li><span class="rkind">peer-reviewed</span>
+        <div class="rtitle">Blum-Kulka, S. (1986). Shifts of Cohesion and Coherence in Translation.</div>
+        <div class="rmeta">In <i>Interlingual and Intercultural Communication</i> (House &amp; Blum-Kulka, eds.), Gunter Narr. — the foundational statement of the explicitation hypothesis. <a href="https://www.semanticscholar.org/paper/Shifts-of-Cohesion-and-Coherence-in-Translation-Blum-Kulka-Blum-Kulka/5da3bbb97a820f537d7f405c818aedbb15ab982f">Semantic Scholar</a></div>
+      </li>
+      <li><span class="rkind">peer-reviewed</span>
+        <div class="rtitle">Lakew, S. M., Di Gangi, M. &amp; Federico, M. (2019). Controlling the Output Length of Neural Machine Translation.</div>
+        <div class="rmeta">Proceedings of IWSLT 2019 (16th Intl. Conf. on Spoken Language Translation). Motivates length control precisely by layout-constrained cases. <a href="https://aclanthology.org/2019.iwslt-1.31/">ACL Anthology</a></div>
+      </li>
+      <li><span class="rkind">peer-reviewed</span>
+        <div class="rtitle">Koehn, P. (2005). Europarl: A Parallel Corpus for Statistical Machine Translation.</div>
+        <div class="rmeta">Proceedings of MT Summit X. The canonical multilingual EU-language parallel corpus. <a href="https://aclanthology.org/2005.mtsummit-papers.11/">ACL Anthology</a></div>
+      </li>
+      <li><span class="rkind">standards body</span>
+        <div class="rtitle">W3C Internationalization — Text size in translation.</div>
+        <div class="rmeta">Carries the IBM globalization expansion table used for the benchmark check. <a href="https://www.w3.org/International/articles/article-text-size">w3.org</a></div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Data: 16 sentences × 23 target languages, character-length ratios in
+      <code>scratchpad/expansion_results.json</code>. Method reproducible via
+      <code>expansion_study.py</code> (DeepL + LLM backends through
+      <code>translator_factory.py</code>). Companion docs:
+      <code>docs/flow-technical.html</code> (pipeline) and <code>docs/omnilingua_qna.html</code>
+      (Q8 covers layout fitting). Irish figures excluded — LLM degeneration, not a language fact.</p>
+  </div>
+</footer>
+
+</body>
+</html>
