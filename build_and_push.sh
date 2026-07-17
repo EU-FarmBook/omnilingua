@@ -13,7 +13,7 @@ set -eu
 # The image is built for linux/amd64 explicitly so it runs on x86_64 servers
 # regardless of the local CPU architecture (for example, Apple Silicon Macs).
 
-REGISTRY="${REGISTRY:-ghcr.io/pranavnbapat}"
+REGISTRY="${REGISTRY:-ghcr.io/eu-farmbook}"
 IMAGE_NAME="${IMAGE_NAME:-${REGISTRY}/omnilingua}"
 TAG="${1:-latest}"
 PLATFORM="${PLATFORM:-linux/amd64}"

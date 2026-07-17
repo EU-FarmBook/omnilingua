@@ -1,6 +1,12 @@
-# Doc Generator
+# OmniLingua
+
+Structure-preserving document translation across the 24 official EU languages (FastAPI + CLI).
 
 Translate born-digital PDFs and selected office/text documents while preserving structure as much as possible.
+
+> **Historical note:** this project started life as "Doc Generator", and the old name still
+> appears in a few internals (for example the `doc_generator_api_` temp-dir prefix). The
+> service is deployed as **OmniLingua**.
 
 This project supports:
 - native document translation for `txt`, `docx`, and `pptx`
@@ -9,6 +15,13 @@ This project supports:
   - `direct`: the standard production path
   - `html`: advanced/fallback `PDF -> HTML -> translate/replace -> PDF`
 - three translation backends (`llm`, `deepl`, `adaptive`) — see [Translation engines](#translation-engines)
+
+## Documentation
+
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — module layout, high-level flows, API contract
+- [TESTING.md](./TESTING.md) — test levels and commands
+- [docs/flow-technical.html](./docs/flow-technical.html) — visual end-to-end pipeline walkthrough (open in a browser)
+- [docs/omnilingua_qna.html](./docs/omnilingua_qna.html) — internal Q&A / FAQ about how the service works
 
 ## Features
 
@@ -32,6 +45,7 @@ This project supports:
 - Poppler tools (`pdftohtml`, `pdftotext`, `pdfinfo`) for `html` engine
 - Playwright Chromium for `html` engine
 - OpenAI-compatible LLM endpoint
+- DeepL API key only for the `deepl` and `adaptive` engines
 - LibreOffice/`soffice` only if you want legacy `.doc` or `.ppt` conversion support
 
 Install system deps (Ubuntu/Debian):
@@ -188,7 +202,7 @@ If `--pdf-out` is a directory, output is auto-named as:
 
 ## FastAPI Usage
 
-Run server:
+Run server (local dev, port **15000** by default — override with `HOST`/`PORT`):
 
 ```bash
 bash run.sh
@@ -228,7 +242,16 @@ OpenAPI and kept only as compatibility/internal routes during migration.
 
 ## Testing
 
-See [TESTING.md](./TESTING.md) for the fast unit suite, regression suite, and full EU translation matrix commands.
+See [TESTING.md](./TESTING.md) for the fast unit suite, regression suite, and full EU
+translation matrix commands. Quick reference:
+
+```bash
+TRANSLATION_ENGINE=llm ./run_tests.sh   # fast unit suite (unittest, not pytest)
+./run_regression_tests.sh               # cases from tests/integration_cases.json
+```
+
+Regression outputs and artifacts are written under `output/regression/`. The regression
+suite covers representative PDF cases plus one TXT, one DOCX, and one PPTX fixture.
 
 ## Bulk EU Translation Matrix
 
@@ -263,11 +286,14 @@ long-running integration utility, not part of the normal unit test script.
 
 ## Docker
 
+The container listens on port **9000** (see `Dockerfile` / `docker-compose.yml`);
+the local `run.sh` dev server uses port 15000.
+
 Build and run with Docker:
 
 ```bash
 docker build -t omnilingua .
-docker run --rm -p 15000:15000 --env-file .env omnilingua
+docker run --rm -p 9000:9000 --env-file .env omnilingua
 ```
 
 Build and run with Compose:
@@ -279,71 +305,78 @@ docker compose up --build
 Then call:
 
 ```bash
-curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:15000/health
+curl -u "$BASIC_AUTH_USERNAME:$BASIC_AUTH_PASSWORD" http://localhost:9000/health
 ```
 
-Push (if `docker-compose.yml` has service `omnilingua` with an `image:` tag):
+Push (the compose service `omnilingua` has an `image:` tag):
 
 ```bash
 docker compose build omnilingua
 docker compose push omnilingua
 ```
 
+Notes:
+
+- The image bundles poppler-utils, DejaVu/Noto fonts, and Playwright Chromium.
+- The image does **not** include LibreOffice, so legacy `.doc`/`.ppt` conversion is
+  unavailable in Docker unless you add it to the `Dockerfile`.
+
 ## Project Structure
 
 ```text
 omnilingua/
 ├── app/
-│   ├── main.py
+│   ├── main.py                          # FastAPI bootstrap (basic auth on ALL routes, incl. /docs)
 │   ├── api/
 │   │   └── routes/
-│   │       ├── health.py
-│   │       └── translate.py
+│   │       ├── health.py                # GET /health
+│   │       └── translate.py             # POST /translate/document (+ hidden PDF compat routes)
+│   ├── core/
+│   │   ├── auth.py                      # HTTP basic auth
+│   │   ├── engines.py                   # llm | deepl | adaptive selection and validation
+│   │   ├── languages.py                 # the 24 EU language codes
+│   │   └── model_config.py              # env resolution (incl. legacy fallback names)
 │   ├── services/
-│   │   └── pdf_translate_service.py
+│   │   ├── document_translate_service.py  # /translate/document validation + routing
+│   │   └── pdf_translate_service.py       # PDF compat/advanced (html engine) orchestration
 │   └── pipeline/
-│       ├── convert_pdf_to_html.py
-│       ├── extract_native_blocks.py
-│       ├── fonts.py
-│       ├── translate_pdf_image_text.py
-│       ├── replace_html_text.py
-│       ├── pdf_page_size.py
-│       ├── render_html_to_pdf.py
-│       ├── translator_llm.py
-│       └── translate_pdf_direct.py
+│       ├── block_schema.py
+│       ├── extract_native_blocks.py     # PDF structure extraction (direct engine)
+│       ├── translate_pdf_direct.py      # direct engine orchestration
+│       ├── pdf_content_policy.py        # formula/equation-heavy PDF rejection
+│       ├── protected_text.py            # URL/email/@handle token protection
+│       ├── fonts.py                     # glyph-aware font fallback
+│       ├── translator_factory.py        # backend selection
+│       ├── translator_llm.py            # OpenAI-compatible backend (+ HTML node translation)
+│       ├── translator_deepl.py          # DeepL backend
+│       ├── translator_adaptive.py       # DeepL-with-LLM-fallback backend
+│       ├── translate_text_segments.py   # shared segment translation core
+│       ├── translate_txt.py             # native .txt
+│       ├── translate_docx.py            # native .docx
+│       ├── translate_pptx.py            # native .pptx
+│       ├── convert_legacy_office.py     # .doc/.ppt -> .docx/.pptx via LibreOffice
+│       ├── convert_pdf_to_html.py       # html engine: Poppler pdftohtml
+│       ├── replace_html_text.py         # html engine: JSON mapping replacement
+│       ├── render_html_to_pdf.py        # html engine: Playwright Chromium rendering
+│       ├── pdf_page_size.py             # html engine: source page geometry
+│       ├── playwright_support.py        # html engine: Chromium install check
+│       ├── translate_pdf_image_text.py  # experimental image-embedded text (direct engine)
+│       ├── translate_html_image_text.py # experimental image-embedded text (html engine)
+│       └── vision_llm.py                # vision model OCR client
 ├── cli.py
-├── run.sh
+├── docs/                                # flow-technical.html, omnilingua_qna.html
+├── tests/
+├── scripts/
+├── run.sh                               # local dev server (port 15000)
 ├── run_tests.sh
 ├── run_regression_tests.sh
-├── tests/
+├── run_all_eu_translations.sh
 ├── requirements.txt
-├── ARCHITECTURE.md
+├── Dockerfile / docker-compose.yml
+├── ARCHITECTURE.md / TESTING.md
 ├── .env.sample
 └── README.md
 ```
-
-## Tests
-
-Run the unit test suite:
-
-```bash
-./run_tests.sh
-```
-
-Run regression translations for the cases listed in `tests/integration_cases.json`:
-
-```bash
-./run_regression_tests.sh
-```
-
-Regression outputs and artifacts are written under `output/regression/`.
-
-The regression suite now covers:
-
-- representative PDF cases
-- one TXT fixture
-- one DOCX fixture
-- one PPTX fixture
 
 ## Structured Files Guidance
 
