@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from difflib import SequenceMatcher
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,32 @@ def _normalize_compare_text(text: str) -> str:
     return text
 
 
+def _looks_degenerate_translation(src: str, dst: str) -> bool:
+    """Detect model degeneration: runaway length or repetition loops.
+
+    Low-resource targets (notably Irish and Maltese) can send the model into a
+    loop ("… ar bheith i bhunáid ar bheith i bhunáid …"). Such output is far
+    longer than any legitimate translation, never fits the source layout, and
+    ends with the English source being kept. EU-language expansion tops out
+    around 1.5x the source length, so the thresholds below only fire on
+    genuinely pathological output.
+    """
+    if len(dst) > max(len(src) * 2.4, len(src) + 120.0):
+        return True
+
+    words = dst.split()
+    if len(words) >= 16:
+        if len(set(words)) / len(words) < 0.4:
+            return True
+        quadgram_counts = Counter(
+            " ".join(words[i : i + 4]) for i in range(len(words) - 3)
+        )
+        if max(quadgram_counts.values()) >= 3:
+            return True
+
+    return False
+
+
 def should_retry_translation(
     source_text: str,
     translated_text: str,
@@ -51,6 +78,8 @@ def should_retry_translation(
     if not dst:
         return True
     if src == dst:
+        return True
+    if _looks_degenerate_translation(src, dst):
         return True
 
     # Large exact overlap usually means source text leaked into output.

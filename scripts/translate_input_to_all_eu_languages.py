@@ -81,16 +81,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--source-lang",
-        default="en",
+        default=None,
         help=(
-            "Source language for all input files. Defaults to 'en'. Use --auto-source "
-            "to let each pipeline auto-detect instead."
+            "Source language for all input files. When omitted, each pipeline "
+            "auto-detects the source language per file (recommended for mixed or "
+            "non-English input sets). Declaring a wrong source language silently "
+            "mistranslates every non-matching document, so only set this when the "
+            "whole input set is known to share one language."
         ),
     )
     parser.add_argument(
         "--auto-source",
         action="store_true",
-        help="Do not pass --source-lang to the translator; let it auto-detect per file.",
+        help=(
+            "Force per-file auto-detection even if --source-lang is given. "
+            "(Auto-detection is already the default when --source-lang is omitted.)"
+        ),
     )
     parser.add_argument(
         "--engine",
@@ -221,7 +227,7 @@ def main() -> int:
     work_root.mkdir(parents=True, exist_ok=True)
     logs_root.mkdir(parents=True, exist_ok=True)
 
-    source_lang = None if args.auto_source else (args.source_lang.strip().lower() or None)
+    source_lang = None if args.auto_source else ((args.source_lang or "").strip().lower() or None)
     effective_engine = validate_engine(args.engine)
     total = len(inputs) * len(languages)
     results: list[JobResult] = []
@@ -336,6 +342,17 @@ def main() -> int:
                 status = "translated"
                 reason = None
                 print(f"  finished {finished_at} in {format_duration(duration)}")
+            elif (
+                "Source and target language are the same" in proc.stderr
+                and not args.no_copy_source_language
+                and input_path.suffix.lower() not in {".doc", ".ppt"}
+            ):
+                # Auto-detection resolved the document's own language as the
+                # target: the original *is* the artifact for this language.
+                shutil.copy2(input_path, output_path)
+                status = "copied_source_language"
+                reason = "auto-detected source language equals target"
+                print(f"  copied source-language artifact (auto-detected) in {format_duration(duration)}")
             else:
                 failures += 1
                 status = "failed"

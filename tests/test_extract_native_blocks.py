@@ -6,7 +6,10 @@ from app.pipeline.block_schema import ExtractedTextBlock, TextStyleHint
 from app.pipeline.extract_native_blocks import (
     _can_merge_lines,
     _classify_scholarly_kind,
+    _detect_line_alignment,
     _detect_multicolumn_page,
+    _mark_reference_section,
+    _merge_hyphen_continuations,
     _style_span_for_line,
     collect_language_detection_samples,
     _sort_page_lines,
@@ -221,6 +224,56 @@ class ExtractNativeBlocksTests(unittest.TestCase):
         second = _block(2, 40, 101.0, 260, 119.0, "practically the same row")
         object.__setattr__(second, "raw_block_id", first.raw_block_id)
         self.assertFalse(_can_merge_lines(first, second, multi_column=False))
+
+    def test_detects_centered_lines(self) -> None:
+        # Common midpoint, wandering left edges: a centered heading.
+        centered = [
+            (80.0, 100.0, 220.0, 112.0),
+            (60.0, 114.0, 240.0, 126.0),
+            (95.0, 128.0, 205.0, 140.0),
+        ]
+        self.assertEqual(_detect_line_alignment(centered), "center")
+
+    def test_left_aligned_and_single_lines_stay_left(self) -> None:
+        left_aligned = [
+            (40.0, 100.0, 220.0, 112.0),
+            (40.0, 114.0, 260.0, 126.0),
+        ]
+        self.assertEqual(_detect_line_alignment(left_aligned), "left")
+        self.assertEqual(_detect_line_alignment([(40.0, 100.0, 220.0, 112.0)]), "left")
+
+    def test_merges_hyphen_split_across_block_boundary(self) -> None:
+        # A bold lead-in or raw-block split leaves "bioecono-" / "my. …" in
+        # separate blocks; the post-pass must reunite the word.
+        first = _block(1, 40, 100.0, 260, 118.0, "Higher value added from circular bioecono-")
+        second = _block(2, 40, 116.0, 260, 150.0, "my. Development of alternative components.")
+        merged = _merge_hyphen_continuations([first, second], page_width=550.0)
+        self.assertEqual(len(merged), 1)
+        self.assertIn("bioeconomy. Development", merged[0].text)
+
+    def test_reference_section_reclassifies_trailing_blocks(self) -> None:
+        body = [_block(i, 40, 100 + i * 14, 300, 112 + i * 14, f"Body sentence number {i}.") for i in range(6)]
+        heading = _block(6, 40, 200, 120, 214, "References")
+        entries = [
+            _block(7, 40, 220, 300, 234, "de Nicola G. R., Leoni O. 2011. A simple analytical method."),
+            _block(8, 40, 240, 300, 254, "Kirkegaard J. 2009. Biofumigation for plant disease control."),
+        ]
+        marked = _mark_reference_section(body + [heading] + entries)
+        # Body untouched, heading + every trailing entry become references.
+        self.assertTrue(all(b.kind != "reference" for b in marked[:6]))
+        self.assertTrue(all(b.kind == "reference" for b in marked[6:]))
+
+    def test_reference_marking_ignores_early_inline_mention(self) -> None:
+        blocks = [_block(0, 40, 100, 300, 112, "See the References section below for details.")]
+        blocks += [_block(i, 40, 100 + i * 14, 300, 112 + i * 14, f"Body {i}.") for i in range(1, 6)]
+        marked = _mark_reference_section(blocks)
+        self.assertTrue(all(b.kind != "reference" for b in marked))
+
+    def test_hyphen_merge_requires_lowercase_continuation(self) -> None:
+        first = _block(1, 40, 100.0, 260, 118.0, "See the 2020-")
+        second = _block(2, 40, 116.0, 260, 134.0, "2027 programme results.")
+        merged = _merge_hyphen_continuations([first, second], page_width=550.0)
+        self.assertEqual(len(merged), 2)
 
 
 if __name__ == "__main__":

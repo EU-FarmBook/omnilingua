@@ -242,13 +242,18 @@ Outputs are written under `output/eu_translations/<lang>/`, with per-job logs in
 `output/eu_translations/_logs/` and a machine-readable manifest at
 `output/eu_translations/manifest.json`. The runner prints the resolved engine,
 start/finish timestamps, and per-translation duration; the manifest stores the
-same timing fields. By default the script assumes the input files are English and
-copies the `en` artifact so each input has a 24-language output set.
+same timing fields. By default the script auto-detects each file's source
+language; when a target language matches the detected source, the original file
+is copied as that language's artifact so each input still has a 24-language
+output set. Set `SOURCE_LANG` explicitly only when the whole input set is known
+to share one language — declaring a wrong source silently mistranslates every
+non-matching document.
 
 Useful overrides:
 
 ```bash
 ENGINE=adaptive ./run_all_eu_translations.sh
+SOURCE_LANG=en ./run_all_eu_translations.sh
 OVERWRITE=1 ./run_all_eu_translations.sh
 INPUT_DIR=/path/to/input OUTPUT_DIR=/path/to/output ./run_all_eu_translations.sh
 ```

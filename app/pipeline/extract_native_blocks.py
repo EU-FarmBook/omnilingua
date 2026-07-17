@@ -69,6 +69,21 @@ def _merge_bbox(
     )
 
 
+def _line_rotation(direction: object) -> int:
+    """Map a PyMuPDF line ``dir`` vector to an ``insert_textbox`` rotate value."""
+    try:
+        dx, dy = float(direction[0]), float(direction[1])  # type: ignore[index]
+    except (TypeError, IndexError, ValueError):
+        return 0
+    if dx <= -0.92:
+        return 180
+    if dy <= -0.92:
+        return 90
+    if dy >= 0.92:
+        return 270
+    return 0
+
+
 def _can_merge_lines(
     previous: ExtractedTextBlock,
     current: ExtractedTextBlock,
@@ -76,6 +91,8 @@ def _can_merge_lines(
     multi_column: bool,
 ) -> bool:
     if previous.page_index != current.page_index:
+        return False
+    if previous.rotation != current.rotation or previous.rotation != 0:
         return False
     if previous.style.font_name != current.style.font_name:
         return False
@@ -183,6 +200,58 @@ def _looks_like_reference_line(text: str) -> bool:
     if re.search(r"\(\d{4}[a-z]?\)", stripped) and re.search(r"\bhttps?://|\bdoi[:\s]", stripped.lower()):
         return True
     return False
+
+
+_REFERENCE_HEADING_RE = re.compile(
+    r"^(references|bibliography|literature(?:\s+cited)?|works\s+cited)\s*:?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_reference_heading(text: str) -> bool:
+    return bool(_REFERENCE_HEADING_RE.match(" ".join(text.split()).strip()))
+
+
+def _mark_reference_section(blocks: List[ExtractedTextBlock]) -> List[ExtractedTextBlock]:
+    """Reclassify every block after a standalone References heading.
+
+    A bibliography spans many blocks in varied citation styles that no single
+    per-line pattern catches reliably, and translating citations breaks lookups.
+    References are conventionally the final section, so once a standalone
+    "References"/"Bibliography" heading appears in reading order, mark it and all
+    following blocks as ``reference`` (which the translator skips). Guarded to
+    the document's latter half so an inline "References:" mention early in the
+    body cannot suppress the whole document.
+    """
+    heading_index: int | None = None
+    for index, block in enumerate(blocks):
+        if _is_reference_heading(block.text) and index >= len(blocks) // 2:
+            heading_index = index
+            break
+    if heading_index is None:
+        return blocks
+
+    result = list(blocks)
+    for index in range(heading_index, len(result)):
+        block = result[index]
+        if block.kind == "reference":
+            continue
+        result[index] = ExtractedTextBlock(
+            block_id=block.block_id,
+            page_index=block.page_index,
+            bbox=block.bbox,
+            text=block.text,
+            source=block.source,
+            kind="reference",
+            confidence=block.confidence,
+            style=block.style,
+            raw_block_id=block.raw_block_id,
+            column_index=block.column_index,
+            line_count=block.line_count,
+            alignment=block.alignment,
+            rotation=block.rotation,
+        )
+    return result
 
 
 def _starts_new_structural_block(text: str) -> bool:
@@ -341,6 +410,8 @@ def _with_column_metadata(
                 raw_block_id=block.raw_block_id,
                 column_index=column_index,
                 line_count=block.line_count,
+                alignment=block.alignment,
+                rotation=block.rotation,
             )
         )
     return result
@@ -381,6 +452,24 @@ def _sort_page_lines(
     return ordered
 
 
+def _detect_line_alignment(line_bboxes: List[tuple[float, float, float, float]]) -> str:
+    """Infer whether a block's source lines were centered.
+
+    Centered lines share a common midpoint while their left edges wander;
+    left-aligned (and justified) lines share a common left edge. Only report
+    "center" on clear geometric evidence from at least two lines.
+    """
+    if len(line_bboxes) < 2:
+        return "left"
+    lefts = [bbox[0] for bbox in line_bboxes]
+    centers = [(bbox[0] + bbox[2]) / 2.0 for bbox in line_bboxes]
+    left_spread = max(lefts) - min(lefts)
+    center_spread = max(centers) - min(centers)
+    if left_spread > 6.0 and center_spread <= max(3.0, left_spread * 0.25):
+        return "center"
+    return "left"
+
+
 def _group_page_lines(
     page_lines: List[ExtractedTextBlock],
     next_block_id: int,
@@ -391,11 +480,26 @@ def _group_page_lines(
     grouped: List[ExtractedTextBlock] = []
     current: ExtractedTextBlock | None = None
     current_line_count = 0
+    current_line_bboxes: List[tuple[float, float, float, float]] = []
 
     def flush() -> None:
         nonlocal current, current_line_count, next_block_id
         if current is None:
             return
+        kind = _resolved_block_kind(
+            current.text,
+            current_line_count,
+            page_top=current.bbox[1],
+            font_size=current.style.font_size,
+            page_width=page_width,
+            block_width=current.bbox[2] - current.bbox[0],
+        )
+        alignment = _detect_line_alignment(current_line_bboxes)
+        # Figure/table captions are conventionally centered under their figure;
+        # a single line carries no geometric evidence either way, so preserve
+        # the visual midpoint instead of anchoring the translation left.
+        if kind == "caption" and current_line_count == 1:
+            alignment = "center"
         grouped.append(
             ExtractedTextBlock(
                 block_id=next_block_id,
@@ -403,29 +507,26 @@ def _group_page_lines(
                 bbox=current.bbox,
                 text=current.text,
                 source=current.source,
-                kind=_resolved_block_kind(
-                    current.text,
-                    current_line_count,
-                    page_top=current.bbox[1],
-                    font_size=current.style.font_size,
-                    page_width=page_width,
-                    block_width=current.bbox[2] - current.bbox[0],
-                ),
+                kind=kind,
                 confidence=current.confidence,
                 style=current.style,
                 raw_block_id=current.raw_block_id,
                 column_index=current.column_index,
                 line_count=current_line_count,
+                alignment=alignment,
+                rotation=current.rotation,
             )
         )
         next_block_id += 1
         current = None
         current_line_count = 0
+        current_line_bboxes.clear()
 
     for line in page_lines:
         if current is None:
             current = line
             current_line_count = 1
+            current_line_bboxes[:] = [line.bbox]
             continue
         if _can_merge_lines(current, line, multi_column=multi_column):
             current = ExtractedTextBlock(
@@ -440,15 +541,81 @@ def _group_page_lines(
                 raw_block_id=current.raw_block_id,
                 column_index=current.column_index,
                 line_count=current.line_count + line.line_count,
+                rotation=current.rotation,
             )
             current_line_count += 1
+            current_line_bboxes.append(line.bbox)
             continue
         flush()
         current = line
         current_line_count = 1
+        current_line_bboxes[:] = [line.bbox]
 
     flush()
     return (grouped, next_block_id)
+
+
+def _ends_with_word_hyphen(text: str) -> bool:
+    stripped = text.rstrip()
+    return len(stripped) >= 2 and stripped.endswith("-") and stripped[-2].isalpha()
+
+
+def _merge_hyphen_continuations(
+    page_blocks: List[ExtractedTextBlock],
+    *,
+    page_width: float,
+) -> List[ExtractedTextBlock]:
+    """Merge blocks split mid-word by a trailing line-break hyphen.
+
+    ``_can_merge_lines`` refuses to merge across raw PyMuPDF blocks or font
+    changes (e.g. a bold bullet lead-in), so a hyphenated line break at such a
+    boundary strands the word fragments in separate blocks and each half gets
+    translated on its own ("bioecono-" / "my. …"). Reading order is already
+    resolved here, so a block ending in a word hyphen whose successor starts
+    lowercase and sits directly below it is a safe continuation.
+    """
+    merged: List[ExtractedTextBlock] = []
+    for block in page_blocks:
+        previous = merged[-1] if merged else None
+        if previous is not None and _ends_with_word_hyphen(previous.text):
+            current_text = block.text.lstrip()
+            font_size = previous.style.font_size
+            vertical_gap = block.bbox[1] - previous.bbox[3]
+            same_column = previous.column_index == block.column_index
+            if (
+                previous.page_index == block.page_index
+                and same_column
+                and previous.rotation == 0 == block.rotation
+                and current_text[:1].islower()
+                and -max(2.0, font_size * 0.55) <= vertical_gap <= max(font_size * 0.7, 4.0)
+            ):
+                bbox = _merge_bbox(previous.bbox, block.bbox)
+                text = _join_text(previous.text, block.text)
+                line_count = previous.line_count + block.line_count
+                merged[-1] = ExtractedTextBlock(
+                    block_id=previous.block_id,
+                    page_index=previous.page_index,
+                    bbox=bbox,
+                    text=text,
+                    source=previous.source,
+                    kind=_resolved_block_kind(
+                        text,
+                        line_count,
+                        page_top=bbox[1],
+                        font_size=font_size,
+                        page_width=page_width,
+                        block_width=bbox[2] - bbox[0],
+                    ),
+                    confidence=min(previous.confidence, block.confidence),
+                    style=previous.style,
+                    raw_block_id=previous.raw_block_id,
+                    column_index=previous.column_index,
+                    line_count=line_count,
+                    alignment=previous.alignment,
+                )
+                continue
+        merged.append(block)
+    return merged
 
 
 def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
@@ -500,6 +667,7 @@ def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
                             ),
                             raw_block_id=raw_block_index,
                             line_count=1,
+                            rotation=_line_rotation(raw_line.get("dir", (1.0, 0.0))),
                         )
                     )
                     line_id += 1
@@ -522,11 +690,46 @@ def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
                 multi_column=multi_column,
                 page_width=page_width,
             )
+            page_grouped = _merge_hyphen_continuations(page_grouped, page_width=page_width)
             grouped_blocks.extend(page_grouped)
 
-        return grouped_blocks
+        return _mark_reference_section(grouped_blocks)
     finally:
         doc.close()
+
+
+def collect_untranslatable_line_rects(pdf_path: Path) -> dict[int, List[tuple[float, float, float, float]]]:
+    """Return, per page index, the bboxes of native text lines that are never
+    translated (filtered by :func:`is_translatable_native_text`).
+
+    These number/symbol-only lines never enter a block, so they are never
+    intentionally redacted. When a translated block's bounding box vertically
+    bleeds into such a line's row (common for parenthetical figures under a
+    bullet), the block's redaction would otherwise erase them — the "numbers in
+    parenthesis disappeared" failure. Callers feed these rects into the
+    redaction-avoidance set so the source figures survive.
+    """
+    doc = fitz.open(str(pdf_path))
+    rects: dict[int, List[tuple[float, float, float, float]]] = {}
+    try:
+        for page_index, page in enumerate(doc):
+            for raw_block in page.get_text("dict").get("blocks", []):
+                if raw_block.get("type", 0) != 0:
+                    continue
+                for raw_line in raw_block.get("lines", []):
+                    spans = raw_line.get("spans", [])
+                    if not spans:
+                        continue
+                    text = "".join(str(span.get("text", "")) for span in spans).strip()
+                    if not text or is_translatable_native_text(text):
+                        continue
+                    bbox_raw = raw_line.get("bbox")
+                    if not bbox_raw or len(bbox_raw) != 4:
+                        continue
+                    rects.setdefault(page_index, []).append(tuple(float(v) for v in bbox_raw))
+    finally:
+        doc.close()
+    return rects
 
 
 def collect_language_detection_samples(

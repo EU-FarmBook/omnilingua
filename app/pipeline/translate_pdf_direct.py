@@ -10,6 +10,7 @@ import fitz  # PyMuPDF
 from app.pipeline.block_schema import ExtractedTextBlock
 from app.pipeline.extract_native_blocks import (
     collect_language_detection_samples,
+    collect_untranslatable_line_rects,
     extract_pdf_metadata_language,
     extract_native_text_blocks,
 )
@@ -209,6 +210,8 @@ def _measure_textbox_spare(
     fontsize: float,
     color: tuple[float, float, float],
     lineheight: float,
+    align: int = fitz.TEXT_ALIGN_LEFT,
+    rotate: int = 0,
 ) -> float:
     scratch = fitz.open()
     try:
@@ -222,8 +225,9 @@ def _measure_textbox_spare(
             fontfile=fontfile,
             fontsize=fontsize,
             color=color,
-            align=fitz.TEXT_ALIGN_LEFT,
+            align=align,
             lineheight=lineheight,
+            rotate=rotate,
             overlay=True,
         )
     finally:
@@ -249,6 +253,8 @@ class _BlockWritePlan:
     fontsize: float
     line_height: float
     color: tuple[float, float, float]
+    align: int = fitz.TEXT_ALIGN_LEFT
+    rotate: int = 0
 
 
 def _plan_block_write(
@@ -274,8 +280,15 @@ def _plan_block_write(
     if not text:
         return "skipped", None
 
+    is_centered = getattr(block, "alignment", "left") == "center"
+    rotation = getattr(block, "rotation", 0)
     display_block = _is_display_block(block)
-    if display_block:
+    if rotation:
+        # Rotated (vertical) text: keep the exact source box and orientation;
+        # the font-shrink search below absorbs any translation growth.
+        extra_width = 0.0
+        min_h = rect.height
+    elif display_block:
         extra_width = 0.0
         min_h = rect.height
     elif block.kind in {"abstract"}:
@@ -299,8 +312,16 @@ def _plan_block_write(
         extra_width = min(extra_width, 6.0)
         min_h *= 1.18
 
-    max_x1 = min(page.rect.x1 - 2.0, rect.x1 + extra_width)
-    rect = fitz.Rect(rect.x0, rect.y0, max_x1, rect.y0 + min_h)
+    if is_centered and extra_width > 0.0:
+        # Widen symmetrically so the box midpoint — and the centered text —
+        # stays on the source text's midpoint.
+        half_extra = extra_width / 2.0
+        min_x0 = max(page.rect.x0 + 2.0, rect.x0 - half_extra)
+        max_x1 = min(page.rect.x1 - 2.0, rect.x1 + half_extra)
+        rect = fitz.Rect(min_x0, rect.y0, max_x1, rect.y0 + min_h)
+    else:
+        max_x1 = min(page.rect.x1 - 2.0, rect.x1 + extra_width)
+        rect = fitz.Rect(rect.x0, rect.y0, max_x1, rect.y0 + min_h)
 
     # Clamp the box bottom so a reflowed translation (typically longer than the
     # source) cannot spill into the block directly below it in the same column.
@@ -312,7 +333,7 @@ def _plan_block_write(
     # block's top — not when it starts below this block's bottom. On these
     # tightly-packed posters, adjacent source line/paragraph boxes overlap by a
     # few points, so keying off the bottom edge made the clamp never fire.
-    if not display_block and obstacle_rects:
+    if not display_block and not rotation and obstacle_rects:
         vertical_limit = page.rect.y1 - 2.0
         start_threshold = source_rect.y0 + max(4.0, block.style.font_size * 0.6)
         for obstacle in obstacle_rects:
@@ -332,15 +353,20 @@ def _plan_block_write(
         # leave the block unplaced) rather than producing a zero-height box.
         rect.y1 = max(source_rect.y0 + 10.0, min(rect.y1, vertical_limit))
 
-    candidate_rects = _candidate_layout_rects(
-        page,
-        block,
-        source_rect,
-        rect,
-        obstacle_rects or [],
-    )
+    if rotation:
+        # Sideways-expansion candidates assume horizontal text flow.
+        candidate_rects = [rect]
+    else:
+        candidate_rects = _candidate_layout_rects(
+            page,
+            block,
+            source_rect,
+            rect,
+            obstacle_rects or [],
+        )
 
     fontname, fontfile, render_text = resolve_font_for_text(page, block.style, text)
+    align = fitz.TEXT_ALIGN_CENTER if is_centered else fitz.TEXT_ALIGN_LEFT
     if display_block:
         size = max(8.0, block.style.font_size)
         line_height = 1.05 if block.kind == "title" else 1.08
@@ -376,6 +402,8 @@ def _plan_block_write(
                     fontsize=candidate_size,
                     color=block.style.color_rgb,
                     lineheight=candidate_line_height,
+                    align=align,
+                    rotate=rotation,
                 )
                 # Require a genuine fit (non-negative spare). ``insert_textbox``
                 # renders NOTHING when the text overflows even slightly, so a
@@ -415,6 +443,8 @@ def _plan_block_write(
         fontsize=placed_size,
         line_height=placed_line_height,
         color=block.style.color_rgb,
+        align=align,
+        rotate=rotation,
     )
     return "fit", plan
 
@@ -434,8 +464,9 @@ def _apply_block_plan(page: fitz.Page, plan: _BlockWritePlan) -> None:
         fontfile=plan.fontfile,
         fontsize=plan.fontsize,
         color=plan.color,
-        align=fitz.TEXT_ALIGN_LEFT,
+        align=plan.align,
         lineheight=plan.line_height,
+        rotate=plan.rotate,
         overlay=True,
     )
 
@@ -516,6 +547,10 @@ def translate_pdf_direct(
             continue
         if is_contact_identity_text(protected_source.text):
             continue
+        if block.kind == "reference":
+            # Bibliography entries are canonical citations — translating them
+            # breaks lookups, so they stay in the source language.
+            continue
         candidate_raw = translator.translate_single_strict(
             protected_source.text,
             source_lang,
@@ -569,15 +604,28 @@ def translate_pdf_direct(
         translated_count = 0
         truncated_count = 0
         unplaced_count = 0
-        # Phase 1: plan every block's placement without touching the page, and
-        # queue redaction annotations. Text is inserted only in phase 2, after
-        # all redactions for a page have been applied — otherwise a later block's
-        # redaction would erase text already placed for an earlier overlapping
-        # block (adjacent line boxes overlap), silently blanking the output.
+        # Phase 1: plan every block's placement without touching the page.
+        # Text is inserted only in phase 2, after all redactions for a page have
+        # been applied — otherwise a later block's redaction would erase text
+        # already placed for an earlier overlapping block (adjacent line boxes
+        # overlap), silently blanking the output.
         plans_by_page: dict[int, list[_BlockWritePlan]] = {}
+        # Source text that stays on the page and must survive every redaction:
+        # untranslated/rejected/unplaced blocks (added below) plus number- and
+        # symbol-only lines that were filtered before block creation and so are
+        # never translated. A placed neighbour's redaction box routinely bleeds
+        # into these rows (e.g. a parenthetical figure under a bullet), so their
+        # rects must be excluded from that redaction.
+        preserved_rects_by_page: dict[int, list[fitz.Rect]] = {
+            page_index: [fitz.Rect(*bbox) for bbox in bboxes]
+            for page_index, bboxes in collect_untranslatable_line_rects(pdf_in).items()
+        }
         for block in blocks:
             translated = translated_map.get(block.block_id)
             if not translated:
+                preserved_rects_by_page.setdefault(block.page_index, []).append(
+                    fitz.Rect(*block.bbox)
+                )
                 continue
             page = doc[block.page_index]
             status, plan = _plan_block_write(
@@ -590,9 +638,26 @@ def translate_pdf_direct(
             if status == "fit" and plan is not None:
                 translated_count += 1
                 plans_by_page.setdefault(block.page_index, []).append(plan)
-                page.add_redact_annot(plan.redaction_rect, fill=None)
-            elif status == "unplaced":
-                unplaced_count += 1
+            else:
+                preserved_rects_by_page.setdefault(block.page_index, []).append(
+                    fitz.Rect(*block.bbox)
+                )
+                if status == "unplaced":
+                    unplaced_count += 1
+
+        # Queue redactions only now that every preserved-source rect is known,
+        # shrinking each redaction away from text that must survive. If trimming
+        # would collapse the rect, keep the original: stray glyphs behind a
+        # translation are less harmful than erasing preserved source text, but a
+        # translation drawn over untouched source glyphs is unreadable.
+        for page_index, page_plans in plans_by_page.items():
+            page = doc[page_index]
+            preserved = preserved_rects_by_page.get(page_index, [])
+            for plan in page_plans:
+                redaction_rect = _redaction_rect_avoiding(plan.redaction_rect, preserved)
+                if redaction_rect.width < 1.0 or redaction_rect.height < 1.0:
+                    redaction_rect = plan.redaction_rect
+                page.add_redact_annot(redaction_rect, fill=None)
 
         # Phase 2: apply all redactions for a page in one pass, then draw text.
         for page_index, page in enumerate(doc):
@@ -612,8 +677,9 @@ def translate_pdf_direct(
                     fontfile=plan.fontfile,
                     fontsize=plan.fontsize,
                     color=plan.color,
-                    align=fitz.TEXT_ALIGN_LEFT,
+                    align=plan.align,
                     lineheight=plan.line_height,
+                    rotate=plan.rotate,
                     overlay=True,
                 )
         if translate_image_text:

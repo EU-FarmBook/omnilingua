@@ -21,6 +21,7 @@ BlockKind = Literal[
     "image_text",
     "unknown",
 ]
+TextAlignment = Literal["left", "center"]
 
 
 @dataclass(frozen=True)
@@ -43,3 +44,11 @@ class ExtractedTextBlock:
     raw_block_id: int | None = None
     column_index: int | None = None
     line_count: int = 1
+    # How the source lines were aligned within the block box. Translations are
+    # re-inserted with the same alignment so centered headings/captions do not
+    # drift left when the translated text is shorter than the source.
+    alignment: TextAlignment = "left"
+    # Writing direction in degrees (0, 90, 180, 270), matching the ``rotate``
+    # argument of ``insert_textbox``. 90 = reads bottom-to-top (dir (0,-1)),
+    # 270 = top-to-bottom (dir (0,1)).
+    rotation: int = 0

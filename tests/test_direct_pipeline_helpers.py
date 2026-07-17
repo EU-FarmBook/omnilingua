@@ -242,6 +242,84 @@ class DirectPipelineHelperTests(unittest.TestCase):
             finally:
                 translated.close()
 
+    def test_vertical_text_keeps_orientation_after_translation(self) -> None:
+        class FakeTranslator:
+            def translate_single_strict(self, text: str, source_lang: str, target_lang: str) -> str:
+                if "Practice" in text:
+                    return "Praktilise kokkuvotte number"
+                return "Vee desinfitseerimine parandab bioturvalisust."
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_in = Path(tmpdir) / "vertical-source.pdf"
+            pdf_out = Path(tmpdir) / "vertical-translated.pdf"
+            doc = fitz.open()
+            try:
+                page = doc.new_page(width=420, height=400)
+                page.insert_textbox(
+                    fitz.Rect(40, 60, 62, 360),
+                    "Practice Abstract number nineteen",
+                    fontsize=10.0,
+                    rotate=90,
+                )
+                page.insert_text((110, 90), "Water disinfection improves farm biosecurity.", fontsize=11.0)
+                doc.save(pdf_in)
+            finally:
+                doc.close()
+
+            with patch("app.pipeline.translate_pdf_direct.get_translator", return_value=FakeTranslator()):
+                translate_pdf_direct(pdf_in, pdf_out, target_lang="et", source_lang="en")
+
+            translated = fitz.open(pdf_out)
+            try:
+                vertical_dirs = [
+                    line["dir"]
+                    for block in translated[0].get_text("dict")["blocks"]
+                    for line in block.get("lines", [])
+                    if "kokkuvotte" in "".join(s["text"] for s in line["spans"])
+                ]
+            finally:
+                translated.close()
+            self.assertTrue(vertical_dirs, "vertical block was not translated/placed")
+            for direction in vertical_dirs:
+                self.assertAlmostEqual(direction[0], 0.0, places=2)
+                self.assertAlmostEqual(direction[1], -1.0, places=2)
+
+    def test_untranslated_neighbor_source_text_survives_redactions(self) -> None:
+        # A block whose translation is rejected keeps its source text; a placed
+        # neighbour's redaction (adjacent line boxes overlap by a few points)
+        # must not erase glyphs out of that preserved text.
+        class FakeTranslator:
+            def translate_single_strict(self, text: str, source_lang: str, target_lang: str) -> str:
+                if text.startswith("REJECTME"):
+                    return ""
+                return "Ubersetzte landwirtschaftliche Zeile"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_in = Path(tmpdir) / "preserve-source.pdf"
+            pdf_out = Path(tmpdir) / "preserve-translated.pdf"
+            doc = fitz.open()
+            try:
+                page = doc.new_page(width=420, height=240)
+                # Different font sizes prevent merging into one paragraph; the
+                # tight leading makes the two line bboxes overlap vertically, so
+                # the first line's redaction would previously clip the second.
+                page.insert_text((72, 83), "Sustainable soil management for arable farms", fontsize=11.0)
+                page.insert_text((72, 90), "REJECTME preserved paradigm shift sentence", fontsize=9.0)
+                doc.save(pdf_in)
+            finally:
+                doc.close()
+
+            with patch("app.pipeline.translate_pdf_direct.get_translator", return_value=FakeTranslator()):
+                translate_pdf_direct(pdf_in, pdf_out, target_lang="de", source_lang="en")
+
+            translated = fitz.open(pdf_out)
+            try:
+                text = translated[0].get_text().replace("\n", " ")
+            finally:
+                translated.close()
+            self.assertIn("Ubersetzte landwirtschaftliche Zeile", text)
+            self.assertIn("REJECTME preserved paradigm shift sentence", text)
+
     def test_direct_pdf_translation_retries_hallucinated_protection_token(self) -> None:
         class FakeTranslator:
             def __init__(self) -> None:
