@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/pranavnbapat/omnilingua:latest
+    image: ghcr.io/eu-farmbook/omnilingua:latest
     container_name: omnilingua
     ports:
       - "9000:9000"
