@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniLingua — How a Document Becomes a Translated Document</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --bg: #f4f6f3; --surface: #ffffff; --surface-2: #eef2ee;
+    --ink: #16201b; --ink-2: #33413a; --muted: #5e6d64; --line: #dde3dd; --line-2: #c6cfc7;
+    --intake: #3f6591; --understand: #0f766e; --ground: #2f7d4f; --generate: #b4632a; --finalize: #8a5a86;
+    --intake-bg: #e7edf5; --understand-bg: #dcefec; --ground-bg: #e0efe5; --generate-bg: #f6e9dc; --finalize-bg: #efe6ef;
+    --ok: #2f7d4f; --stop: #a23b34; --warn: #b4632a;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+    --maxw: 940px; --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1411; --surface: #151c18; --surface-2: #1b231e;
+      --ink: #e7ece7; --ink-2: #c2ccc4; --muted: #93a199; --line: #26302a; --line-2: #35413a;
+      --intake: #7ba3d4; --understand: #4bc2b4; --ground: #63c187; --generate: #e2965a; --finalize: #c79ac4;
+      --intake-bg: #1a2634; --understand-bg: #12332e; --ground-bg: #13301f; --generate-bg: #33230f; --finalize-bg: #2c1f2c;
+      --ok: #63c187; --stop: #e0736a; --warn: #e2965a;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6f3; --surface: #ffffff; --surface-2: #eef2ee;
+    --ink: #16201b; --ink-2: #33413a; --muted: #5e6d64; --line: #dde3dd; --line-2: #c6cfc7;
+    --intake: #3f6591; --understand: #0f766e; --ground: #2f7d4f; --generate: #b4632a; --finalize: #8a5a86;
+    --intake-bg: #e7edf5; --understand-bg: #dcefec; --ground-bg: #e0efe5; --generate-bg: #f6e9dc; --finalize-bg: #efe6ef;
+    --ok: #2f7d4f; --stop: #a23b34; --warn: #b4632a;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1411; --surface: #151c18; --surface-2: #1b231e;
+    --ink: #e7ece7; --ink-2: #c2ccc4; --muted: #93a199; --line: #26302a; --line-2: #35413a;
+    --intake: #7ba3d4; --understand: #4bc2b4; --ground: #63c187; --generate: #e2965a; --finalize: #c79ac4;
+    --intake-bg: #1a2634; --understand-bg: #12332e; --ground-bg: #13301f; --generate-bg: #33230f; --finalize-bg: #2c1f2c;
+    --ok: #63c187; --stop: #e0736a; --warn: #e2965a;
+  }
+
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.65; -webkit-font-smoothing: antialiased; font-size: 16.5px; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+  header.top { border-bottom: 1px solid var(--line); background: radial-gradient(130% 150% at 85% -30%, var(--understand-bg), transparent 62%), var(--surface); }
+  .top-inner { padding: 52px 0 40px; }
+  .eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin: 0 0 14px; }
+  h1 { font-size: clamp(2rem, 4vw, 2.8rem); line-height: 1.07; margin: 0 0 16px; letter-spacing: -0.02em; text-wrap: balance; }
+  .lede { font-size: 1.12rem; color: var(--ink-2); max-width: 64ch; margin: 0; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 22px; font-size: 0.84rem; color: var(--ink-2); }
+  .meta-row .mono, .meta-row code { font-family: var(--mono); font-size: 0.78rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+
+  /* ---- Sticky phase legend ---- */
+  nav.legend { position: sticky; top: 0; z-index: 30; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .legend-inner { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 24px; max-width: var(--maxw); margin: 0 auto; font-size: 0.8rem; }
+  .legend .lg { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+
+  section { padding: 44px 0; border-bottom: 1px solid var(--line); }
+  .sec-head { margin-bottom: 26px; }
+  .sec-head .eyebrow { margin-bottom: 8px; }
+  h2 { font-size: 1.5rem; margin: 0 0 8px; letter-spacing: -0.01em; text-wrap: balance; }
+  h2 .num { font-family: var(--mono); color: var(--muted); font-size: 1rem; margin-right: 10px; }
+  .sec-head p { margin: 0; color: var(--ink-2); max-width: 68ch; }
+  section > .wrap > p { color: var(--ink-2); max-width: 68ch; }
+  p code, li code { font-family: var(--mono); font-size: 0.84em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+
+  /* ---- Overview pipeline strip ---- */
+  .pipeline { display: flex; flex-direction: column; gap: 10px; }
+  .rail { display: grid; grid-template-columns: 128px 1fr; gap: 14px; align-items: stretch; }
+  .rail-label { display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 12px 12px; border-radius: 10px; background: var(--phase-bg); border: 1px solid var(--line); }
+  .rail-label .p-name { font-weight: 700; font-size: 0.92rem; color: var(--phase); }
+  .rail-label .p-sub { font-size: 0.72rem; color: var(--muted); font-family: var(--mono); }
+  .rail-stages { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); font-size: 0.82rem; color: var(--ink); }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--phase); flex: none; }
+  .flowto { color: var(--muted); font-family: var(--mono); font-size: 0.9rem; padding: 0 2px; }
+  .divider-flow { display: flex; justify-content: center; margin: -4px 0 8px; }
+  .divider-flow span { color: var(--line-2); font-size: 1.1rem; }
+
+  /* ---- Stage cards ---- */
+  .stages { display: flex; flex-direction: column; gap: 0; }
+  .stage { position: relative; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--phase); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 12px; }
+  .stage-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .stage-num { font-family: var(--mono); font-size: 0.78rem; color: #fff; background: var(--phase); border-radius: 6px; padding: 2px 8px; flex: none; }
+  .stage-title { font-size: 1.08rem; font-weight: 700; margin: 0; }
+  .stage-file { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+  .stage-what { color: var(--ink-2); margin: 8px 0 0; max-width: 74ch; }
+  .grid-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 20px; margin-top: 16px; border-top: 1px dashed var(--line-2); padding-top: 15px; }
+  .kv .k { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+  .kv .v { font-size: 0.9rem; color: var(--ink-2); }
+  .kv .v code { font-size: 0.82rem; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+  /* ---- Branch block ---- */
+  .branches { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 14px; }
+  .branch { border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px; background: var(--surface-2); }
+  .branch .cond { font-family: var(--mono); font-size: 0.74rem; font-weight: 600; display: inline-block; padding: 2px 8px; border-radius: 5px; margin-bottom: 7px; background: var(--phase, var(--ground)); color: #fff; }
+  .branch p { margin: 0; font-size: 0.86rem; color: var(--ink-2); }
+
+  /* ---- Mode grid ---- */
+  .modes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .mode { border: 1px solid var(--line); border-radius: 10px; padding: 15px 16px; background: var(--surface); border-top: 3px solid var(--m, var(--understand)); }
+  .mode h4 { margin: 0 0 6px; font-family: var(--mono); font-size: 0.92rem; }
+  .mode p { margin: 0 0 8px; font-size: 0.85rem; color: var(--ink-2); }
+  .mode .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag { font-size: 0.68rem; font-family: var(--mono); padding: 2px 7px; border-radius: 5px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  .tag.src { color: var(--ground); border-color: color-mix(in srgb, var(--ground) 40%, var(--line)); }
+  .tag.stop { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
+
+  /* ---- Lanes ---- */
+  .lanes { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .lane { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  .lane-h { padding: 12px 15px; background: var(--understand-bg); border-bottom: 1px solid var(--line); }
+  .lane-h h4 { margin: 0; font-size: 0.98rem; color: var(--understand); }
+  .lane-h .sub { font-size: 0.76rem; color: var(--muted); margin-top: 2px; font-family: var(--mono); }
+  .lane ol { margin: 0; padding: 14px 15px 14px 32px; }
+  .lane li { font-size: 0.87rem; color: var(--ink-2); margin-bottom: 8px; }
+  .lane li:last-child { margin-bottom: 0; }
+  .lane li code { font-size: 0.8rem; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+  /* ---- Tables ---- */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.87rem; min-width: 560px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { background: var(--surface-2); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: none; }
+  td code, th code { font-family: var(--mono); font-size: 0.82rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ground); font-weight: 700; white-space: nowrap; }
+  .pill { display: inline-block; font-size: 0.7rem; font-family: var(--mono); padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+  .pill.e400 { background: color-mix(in srgb, var(--stop) 16%, transparent); color: var(--stop); }
+  .pill.e500 { background: var(--generate-bg); color: var(--warn); }
+  .pill.e401 { background: var(--intake-bg); color: var(--intake); }
+
+  .callout { border: 1px solid var(--line); border-left: 4px solid var(--generate); background: var(--generate-bg); border-radius: 10px; padding: 14px 17px; margin-top: 18px; }
+  .callout b { color: var(--generate); }
+  .callout p { margin: 0; font-size: 0.9rem; color: var(--ink-2); }
+  .callout.good { border-left-color: var(--ground); background: var(--ground-bg); }
+  .callout.good b { color: var(--ground); }
+
+  footer { padding: 34px 0 60px; color: var(--muted); font-size: 0.82rem; }
+  footer code { font-family: var(--mono); font-size: 0.78rem; }
+  .anchor { scroll-margin-top: 60px; }
+  @media (max-width: 640px) { .rail { grid-template-columns: 1fr; } .top-inner { padding: 34px 0 30px; } }
+
+  /* ---- Flowcharts ---- */
+  .fc-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius);
+    background:
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 28px,
+      var(--surface-2);
+    padding: 20px; margin-top: 6px; }
+  .fc { display: block; height: auto; }
+  .fc .node-shape { stroke-width: 1.5; }
+  .fc .node-text { fill: var(--ink); font-family: var(--sans); font-size: 12.5px; }
+  .fc .node-text .ttl { font-weight: 700; }
+  .fc .node-text.strong { font-weight: 700; }
+  .fc .node-text.mono { font-family: var(--mono); font-size: 11px; }
+  .fc text { paint-order: stroke; }
+  .fc .n-intake { fill: var(--intake-bg); stroke: var(--intake); }
+  .fc .n-understand { fill: var(--understand-bg); stroke: var(--understand); }
+  .fc .n-ground { fill: var(--ground-bg); stroke: var(--ground); }
+  .fc .n-generate { fill: var(--generate-bg); stroke: var(--generate); }
+  .fc .n-finalize { fill: var(--finalize-bg); stroke: var(--finalize); }
+  .fc .dec { fill: var(--surface); }
+  .fc .term { stroke-width: 2; }
+  .fc .err { fill: color-mix(in srgb, var(--stop) 15%, var(--surface)); stroke: var(--stop); }
+  .fc .edge { stroke: var(--line-2); stroke-width: 1.6; fill: none; }
+  .fc .e-yes { stroke: var(--ground); }
+  .fc .e-no { stroke: var(--stop); }
+  .fc .e-loop { stroke: var(--generate); stroke-dasharray: 5 4; }
+  .fc .arrowhead { fill: var(--line-2); }
+  .fc .elbl { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+  .fc-cap { font-size: 0.82rem; color: var(--muted); margin: 10px 2px 0; max-width: 70ch; }
+  .fc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 4px 2px 16px; font-size: 0.78rem; color: var(--ink-2); }
+  .fc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .fc-legend .k { width: 22px; height: 13px; border-radius: 3px; border: 1.5px solid var(--muted); flex: none; }
+  .fc-legend .k.proc { border-radius: 4px; }
+  .fc-legend .k.dec { transform: rotate(45deg) scale(0.8); border-radius: 2px; background: var(--surface); }
+  .fc-legend .k.term { border-radius: 7px; }
+  .fc-legend .k.stop { border-color: var(--stop); }
+  .fc-legend .k.keep { border-color: var(--ground); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <p class="eyebrow">EU-FarmBook · OmniLingua · Translation Service</p>
+    <h1>How a document becomes a translated document</h1>
+    <p class="lede">
+      The complete request lifecycle of the structure-preserving translation service — from a
+      multipart upload to a downloadable translated file in any of the 24 official EU languages.
+      Every routing branch, guard rail, translation retry, and layout-fit decision, mapped to the
+      code that runs it.
+    </p>
+    <div class="meta-row">
+      <span><b>Entry:</b> <code class="mono">POST /translate/document</code></span>
+      <span><b>Core:</b> <code class="mono">app/pipeline/translate_pdf_direct.py</code></span>
+      <span><b>Port:</b> <code class="mono">15000</code> · basic auth on every route (incl. <code class="mono">/docs</code>)</span>
+      <span><b>Backends:</b> LLM (vLLM) · DeepL · adaptive</span>
+    </div>
+  </div>
+</header>
+
+<nav class="legend" aria-label="Phase legend">
+  <div class="legend-inner">
+    <span class="lg"><span class="swatch" style="background:var(--intake)"></span> Intake</span>
+    <span class="lg"><span class="swatch" style="background:var(--understand)"></span> Extract</span>
+    <span class="lg"><span class="swatch" style="background:var(--ground)"></span> Translate</span>
+    <span class="lg"><span class="swatch" style="background:var(--generate)"></span> Render</span>
+    <span class="lg"><span class="swatch" style="background:var(--finalize)"></span> Deliver</span>
+    <span class="lg" style="margin-left:auto;color:var(--muted)">Colour = which stage of the pipeline owns the step</span>
+  </div>
+</nav>
+
+<main>
+
+<!-- ============ A. OVERVIEW ============ -->
+<section class="anchor" id="overview">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The whole journey at a glance</p>
+      <h2><span class="num">A</span>Five phases, one downloaded file</h2>
+      <p>
+        A request moves through five phases. The interesting behaviour lives in <b>Extract</b>
+        (turning a PDF's glyph soup back into paragraphs) and <b>Render</b> (putting translated —
+        usually longer — text back without breaking the layout). Translation itself is the easy part;
+        most of the code exists to protect what must <em>not</em> be translated and to make the
+        result fit.
+      </p>
+    </div>
+
+    <div class="pipeline">
+      <div class="rail" style="--phase:var(--intake); --phase-bg:var(--intake-bg)">
+        <div class="rail-label"><span class="p-name">Intake</span><span class="p-sub">validate · route</span></div>
+        <div class="rail-stages">
+          <span class="chip"><span class="dot"></span>Basic auth</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Validate langs / engine / extension</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Route by file type</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Formula-policy gate (PDF)</span>
+        </div>
+      </div>
+      <div class="divider-flow"><span>▼</span></div>
+      <div class="rail" style="--phase:var(--understand); --phase-bg:var(--understand-bg)">
+        <div class="rail-label"><span class="p-name">Extract</span><span class="p-sub">structure · language</span></div>
+        <div class="rail-stages">
+          <span class="chip"><span class="dot"></span>Extract blocks / segments</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Merge lines, detect columns</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Classify block kinds</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Detect source language</span>
+        </div>
+      </div>
+      <div class="divider-flow"><span>▼</span></div>
+      <div class="rail" style="--phase:var(--ground); --phase-bg:var(--ground-bg)">
+        <div class="rail-label"><span class="p-name">Translate</span><span class="p-sub">protect · translate · verify</span></div>
+        <div class="rail-stages">
+          <span class="chip"><span class="dot"></span>Tokenize URLs / emails / handles</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Skip references &amp; contact blocks</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Translate via engine</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Retry / reject suspicious output</span>
+        </div>
+      </div>
+      <div class="divider-flow"><span>▼</span></div>
+      <div class="rail" style="--phase:var(--generate); --phase-bg:var(--generate-bg)">
+        <div class="rail-label"><span class="p-name">Render</span><span class="p-sub">fit · redact · write</span></div>
+        <div class="rail-stages">
+          <span class="chip"><span class="dot"></span>Plan placement (font-shrink search)</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Redact source glyphs (two-phase)</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Insert translated text</span>
+        </div>
+      </div>
+      <div class="divider-flow"><span>▼</span></div>
+      <div class="rail" style="--phase:var(--finalize); --phase-bg:var(--finalize-bg)">
+        <div class="rail-label"><span class="p-name">Deliver</span><span class="p-sub">links · save · stream</span></div>
+        <div class="rail-stages">
+          <span class="chip"><span class="dot"></span>Restore link annotations</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span>Save compacted PDF</span><span class="flowto">→</span>
+          <span class="chip"><span class="dot"></span><code style="font-family:var(--mono);font-size:0.78rem">FileResponse</code> + temp cleanup</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout good">
+      <p><b>One endpoint, three pipelines.</b> <code>POST /translate/document</code> routes purely by
+        file extension: PDFs take the <em>direct</em> PyMuPDF pipeline, <code>.txt/.docx/.pptx</code>
+        take native segment translation, and legacy <code>.doc/.ppt</code> are converted by LibreOffice
+        first. The legacy <code>/translate/pdf</code> and <code>/translate/pdf/advanced</code> routes are
+        hidden compatibility/internal routes — don't build on them.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ B. ROUTING ============ -->
+<section class="anchor" id="routing">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Intake</p>
+      <h2><span class="num">B</span>Entry &amp; routing — which pipeline runs?</h2>
+      <p>Validation happens before anything touches the file; content policy happens before
+        anything is translated. All checks fail with an explicit <code>400</code> rather than a
+        half-translated document.</p>
+    </div>
+
+    <div class="fc-legend">
+      <span><i class="k term keep"></i> start / end</span>
+      <span><i class="k proc"></i> step</span>
+      <span><i class="k dec"></i> decision</span>
+      <span><i class="k proc stop"></i> rejected</span>
+    </div>
+
+    <div class="fc-scroll">
+      <svg class="fc" width="860" height="660" viewBox="0 0 860 660" role="img" aria-label="Request validation and routing by file extension">
+        <defs>
+          <marker id="arrow-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+          </marker>
+        </defs>
+
+        <!-- main column -->
+        <rect x="220" y="16" width="220" height="52" rx="26" class="node-shape term n-intake"/>
+        <text class="node-text strong" text-anchor="middle"><tspan x="330" y="47">A document arrives</tspan></text>
+
+        <rect x="220" y="96" width="220" height="56" rx="8" class="node-shape n-intake"/>
+        <text class="node-text" text-anchor="middle"><tspan x="330" y="119" class="ttl">Validate request</tspan><tspan x="330" y="137">extension · target · engine · langs</tspan></text>
+
+        <rect x="40" y="100" width="150" height="48" rx="8" class="node-shape err"/>
+        <text class="node-text" text-anchor="middle"><tspan x="115" y="129">400 Bad Request</tspan></text>
+
+        <rect x="220" y="180" width="220" height="50" rx="8" class="node-shape n-intake"/>
+        <text class="node-text" text-anchor="middle"><tspan x="330" y="210" class="ttl">Spool upload to temp dir</tspan></text>
+
+        <polygon points="330,258 425,296 330,334 235,296" class="node-shape dec n-intake"/>
+        <text class="node-text" text-anchor="middle"><tspan x="330" y="300" class="ttl">PDF file?</tspan></text>
+
+        <polygon points="330,362 445,410 330,458 215,410" class="node-shape dec n-intake"/>
+        <text class="node-text" text-anchor="middle"><tspan x="330" y="404" class="ttl">Formula-heavy</tspan><tspan x="330" y="420">content policy?</tspan></text>
+
+        <rect x="40" y="386" width="150" height="48" rx="8" class="node-shape err"/>
+        <text class="node-text" text-anchor="middle"><tspan x="115" y="410">400 — rejected</tspan><tspan x="115" y="426">before translation</tspan></text>
+
+        <rect x="210" y="486" width="240" height="64" rx="8" class="node-shape n-ground"/>
+        <text class="node-text" text-anchor="middle"><tspan x="330" y="511" class="ttl">Direct PDF pipeline</tspan><tspan x="330" y="531">extract · translate · redact · rewrite</tspan></text>
+
+        <rect x="200" y="578" width="260" height="58" rx="26" class="node-shape term n-finalize"/>
+        <text class="node-text strong" text-anchor="middle"><tspan x="330" y="600">Translated file streamed back</tspan><tspan x="330" y="618" style="font-weight:400">temp dir cleaned in background</tspan></text>
+
+        <!-- right column: office/legacy -->
+        <polygon points="640,258 745,296 640,334 535,296" class="node-shape dec n-intake"/>
+        <text class="node-text" text-anchor="middle"><tspan x="640" y="290" class="ttl">Legacy</tspan><tspan x="640" y="306">.doc / .ppt?</tspan></text>
+
+        <rect x="530" y="370" width="220" height="52" rx="8" class="node-shape n-intake"/>
+        <text class="node-text" text-anchor="middle"><tspan x="640" y="391" class="ttl">Convert with LibreOffice</tspan><tspan x="640" y="409">soffice → .docx / .pptx</tspan></text>
+
+        <rect x="530" y="458" width="220" height="56" rx="8" class="node-shape n-understand"/>
+        <text class="node-text" text-anchor="middle"><tspan x="640" y="481" class="ttl">Native document path</tspan><tspan x="640" y="499">.txt · .docx · .pptx</tspan></text>
+
+        <!-- edges -->
+        <path d="M330,68 V90" class="edge" marker-end="url(#arrow-a)"/>
+        <path d="M220,124 H196" class="edge e-no" marker-end="url(#arrow-a)"/>
+        <path d="M330,152 V174" class="edge" marker-end="url(#arrow-a)"/>
+        <path d="M330,230 V252" class="edge" marker-end="url(#arrow-a)"/>
+        <path d="M330,334 V356" class="edge e-yes" marker-end="url(#arrow-a)"/>
+        <path d="M425,296 H529" class="edge" marker-end="url(#arrow-a)"/>
+        <path d="M215,410 H196" class="edge e-no" marker-end="url(#arrow-a)"/>
+        <path d="M330,458 V480" class="edge e-yes" marker-end="url(#arrow-a)"/>
+        <path d="M330,550 V572" class="edge" marker-end="url(#arrow-a)"/>
+        <path d="M640,334 V364" class="edge e-yes" marker-end="url(#arrow-a)"/>
+        <path d="M640,422 V452" class="edge" marker-end="url(#arrow-a)"/>
+        <path d="M745,296 H820 V486 H756" class="edge" marker-end="url(#arrow-a)"/>
+        <path d="M640,514 V607 H466" class="edge" marker-end="url(#arrow-a)"/>
+
+        <!-- edge labels -->
+        <text class="elbl" text-anchor="middle"><tspan x="208" y="116">invalid</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="352" y="352">yes</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="478" y="288">no</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="205" y="402">yes</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="352" y="476">no</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="662" y="356">yes</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="782" y="288">no</tspan></text>
+      </svg>
+    </div>
+    <p class="fc-cap">Validation lives in <code>document_translate_service.validate_document_request</code>;
+      the formula-policy gate is <code>pdf_content_policy.ensure_pdf_translation_allowed</code>. The
+      public endpoint always uses the direct layout engine with image-text translation off; only the
+      hidden <code>/translate/pdf/advanced</code> route can select the HTML engine or experiments.</p>
+
+    <div class="branches" style="--phase:var(--intake)">
+      <div class="branch"><span class="cond">extension</span><p>Must be one of <code>.pdf .txt .doc .docx .ppt .pptx</code>. Structured formats (<code>.json .csv .xlsx</code>) are deliberately rejected — see "Structured Files Guidance" in the README.</p></div>
+      <div class="branch"><span class="cond">target_lang</span><p>Required; a two-letter code from the 24 EU languages (<code>app/core/languages.py</code>). Regional forms like <code>pt-br</code> are normalized to <code>pt</code>.</p></div>
+      <div class="branch"><span class="cond">source_lang</span><p>Optional. When given, it must differ from <code>target_lang</code>. When absent, detection runs later — and only then.</p></div>
+      <div class="branch"><span class="cond">engine</span><p><code>llm</code> · <code>deepl</code> · <code>adaptive</code>; empty falls back to the <code>TRANSLATION_ENGINE</code> env default (<code>llm</code>). <code>deepl</code> + Maltese/Irish target fails fast with a clear 400.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ C. DIRECT PDF PIPELINE ============ -->
+<section class="anchor" id="direct">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The production path</p>
+      <h2><span class="num">C</span>The direct PDF pipeline, stage by stage</h2>
+      <p>PDFs have no paragraphs — only positioned glyph runs. The direct engine reconstructs the
+        document's structure, translates it, then surgically swaps the text while leaving images,
+        vector art, and layout untouched.</p>
+    </div>
+
+    <div class="stages">
+      <div class="stage" style="--phase:var(--intake)">
+        <div class="stage-top"><span class="stage-num">1</span><h3 class="stage-title">Content-policy gate</h3><span class="stage-file">pdf_content_policy.py</span></div>
+        <p class="stage-what">Every page's text lines are scored for math symbols
+          (<code>= ∑ ∫ √ ≤ ≈ …</code>), trailing equation numbers like <code>(3.1)</code>, and math
+          functions (<code>sin( log( argmax_ …</code>). Formula-heavy documents are rejected with
+          HTTP 400 <em>before</em> any model call — translating equations garbles them.</p>
+        <div class="grid-kv">
+          <div class="kv"><div class="k">reject: density</div><div class="v">≥ 12 formula lines <em>and</em> ≥ 8% of all lines</div></div>
+          <div class="kv"><div class="k">reject: spread</div><div class="v">≥ 3 pages, ≥ 8 formula lines, on ≥ 25% of pages</div></div>
+          <div class="kv"><div class="k">reject: dense page</div><div class="v">≥ 12 formula lines total and ≥ 8 on one page</div></div>
+        </div>
+      </div>
+
+      <div class="stage" style="--phase:var(--understand)">
+        <div class="stage-top"><span class="stage-num">2</span><h3 class="stage-title">Block extraction &amp; line merging</h3><span class="stage-file">extract_native_blocks.py</span></div>
+        <p class="stage-what">PyMuPDF yields per-line boxes with font, size, colour, and rotation.
+          Consecutive lines are merged back into paragraphs only when the geometry and typography
+          agree: same raw block and font, size delta ≤ max(0.75pt, 8%), a plausible vertical gap
+          (up to ~half a line of <em>overlap</em> is tolerated — line boxes span ascender to descender),
+          aligned left edges, and ≥ 35% horizontal overlap. Merges are refused across sentence
+          boundaries with extra leading, label lines ending in "<code>:</code>", table-ish rows,
+          reference lines, headers/footers, and bullet starts.</p>
+        <div class="grid-kv">
+          <div class="kv"><div class="k">multi-column detection</div><div class="v">≥ 16 lines, ≥ 12 narrow, ≥ 5 per half, avg width ≤ 42% of page → two columns</div></div>
+          <div class="kv"><div class="k">reading order</div><div class="v">full-width top → left column → right column → full-width middle → bottom</div></div>
+          <div class="kv"><div class="k">rotation</div><div class="v">line <code>dir</code> vector → 0/90/180/270; rotated text keeps its exact box</div></div>
+          <div class="kv"><div class="k">alignment</div><div class="v">centered detected from shared midpoints across ≥ 2 lines; single-line captions default to center</div></div>
+        </div>
+      </div>
+
+      <div class="stage" style="--phase:var(--understand)">
+        <div class="stage-top"><span class="stage-num">3</span><h3 class="stage-title">Scholarly block classification</h3><span class="stage-file">extract_native_blocks.py</span></div>
+        <p class="stage-what">Each merged block gets a <code>kind</code> that later controls how much
+          its box may grow: <code>title</code>, <code>abstract</code>, <code>keywords</code>,
+          <code>caption</code>, <code>table</code>, <code>reference</code>, <code>bullet</code>,
+          <code>label</code>, <code>paragraph</code>, or <code>line</code>. Once a standalone
+          "References"/"Bibliography" heading appears in the document's latter half, <em>everything
+          after it</em> is marked <code>reference</code> — bibliographies are canonical citations and
+          are never translated.</p>
+      </div>
+
+      <div class="stage" style="--phase:var(--understand)">
+        <div class="stage-top"><span class="stage-num">4</span><h3 class="stage-title">Source-language detection (only if needed)</h3><span class="stage-file">translator_llm.py · extract_native_blocks.py</span></div>
+        <p class="stage-what">Runs only when <code>source_lang</code> was not supplied. PDF metadata
+          language wins if it maps to an EU code. Otherwise text samples are cleaned (≥ 24 chars,
+          ≥ 12 letters, no URLs/emails, not digit-heavy), aggregated into ~320-character clumps
+          (max 10), and the text model returns an ISO 639-1 code — falling back to <code>en</code>.
+          The DeepL backend instead reads <code>detected_source_lang</code> from a probe call.
+          If the detected source equals the target, the run errors out rather than "translating"
+          a document into itself.</p>
+      </div>
+
+      <div class="stage" style="--phase:var(--ground)">
+        <div class="stage-top"><span class="stage-num">5</span><h3 class="stage-title">Protect what must survive verbatim</h3><span class="stage-file">protected_text.py</span></div>
+        <p class="stage-what">Emails, URLs, and <code>@handles</code> are swapped for opaque tokens
+          (<code>ZXQNT0QXZ</code>, <code>ZXQNT1QXZ</code>, …) before translation and restored after,
+          so no model can "translate" a domain name. Blocks with nothing translatable left
+          (&lt; 2 letters beside tokens), contact-identity blocks (a protected token plus a few
+          capitalized name words), and <code>reference</code> blocks are skipped entirely — their
+          source text stays on the page untouched.</p>
+      </div>
+
+      <div class="stage" style="--phase:var(--ground)">
+        <div class="stage-top"><span class="stage-num">6</span><h3 class="stage-title">Per-block translation with a suspicion loop</h3><span class="stage-file">translate_pdf_direct.py · translator_llm.py</span></div>
+        <p class="stage-what">Each block is translated one at a time with a strict single-snippet
+          prompt (temperature 0). Output is checked for source-text leakage, degeneration loops, and
+          lost protection tokens; a suspicious result earns exactly one retry, and a still-suspicious
+          retry is <b>rejected — the source text is kept</b> rather than shipping a bad translation.
+          The full loop is drawn in section D.</p>
+      </div>
+
+      <div class="stage" style="--phase:var(--generate)">
+        <div class="stage-top"><span class="stage-num">7</span><h3 class="stage-title">Placement planning — will it fit?</h3><span class="stage-file">translate_pdf_direct.py · fonts.py</span></div>
+        <p class="stage-what">Translations are usually longer than their source. For each block a
+          side-effect-free planner picks a box: the source box, grown by kind-specific factors
+          (paragraphs may grow more than captions), clamped so it can never spill into the block
+          below, optionally widened sideways into genuinely free space for short lines. It then
+          searches candidate boxes × line-heights (base, 1.0, 0.94) × font sizes (shrinking ×0.92
+          down to 7pt; display text starts at ≥ 8pt) until the text <em>truly</em> fits —
+          <code>insert_textbox</code> silently renders nothing on overflow, so only a non-negative
+          spare is accepted. No fit → the block is <b>unplaced</b> and its source text is preserved.</p>
+        <div class="grid-kv">
+          <div class="kv"><div class="k">glyph-aware fonts</div><div class="v">any char &gt; U+00FF (Greek, Latin-Extended, Cyrillic…) switches to a Noto/DejaVu Unicode fallback with per-glyph coverage checks</div></div>
+          <div class="kv"><div class="k">centered blocks</div><div class="v">widened symmetrically so the midpoint — and the centered text — stays put</div></div>
+          <div class="kv"><div class="k">rotated text</div><div class="v">keeps exact source box and orientation; only the font shrinks</div></div>
+        </div>
+      </div>
+
+      <div class="stage" style="--phase:var(--generate)">
+        <div class="stage-top"><span class="stage-num">8</span><h3 class="stage-title">Two-phase redaction &amp; write-back</h3><span class="stage-file">translate_pdf_direct.py</span></div>
+        <p class="stage-what">Source glyphs are removed with <em>text-only</em> redactions (images and
+          line art untouched). Critically, this is done in two phases per page: <b>all</b> redactions
+          are queued and applied first, and only then is <b>all</b> translated text inserted.
+          Redaction boxes are trimmed away from "preserved" rects — skipped/rejected/unplaced blocks
+          and number-only lines that were never translated — so a neighbour's redaction can't erase
+          text that must survive.</p>
+        <div class="callout">
+          <p><b>Why two-phase?</b> Adjacent line boxes overlap by a few points. In a naive
+            redact-then-write-per-block loop, block <em>N+1</em>'s redaction erases part of the text
+            just written for block <em>N</em>, silently blanking output. Planning everything first and
+            batching redactions per page makes that impossible.</p>
+        </div>
+      </div>
+
+      <div class="stage" style="--phase:var(--finalize)">
+        <div class="stage-top"><span class="stage-num">9</span><h3 class="stage-title">Finalize &amp; deliver</h3><span class="stage-file">translate_pdf_direct.py</span></div>
+        <p class="stage-what">Link annotations captured before rewriting are restored (deduplicated
+          by geometry + target — redaction drops them otherwise). The document is saved with
+          <code>garbage=3, deflate=True</code>, translation stats are reported
+          (translated / retried / rejected / unplaced counts, API calls), and the API streams the
+          file back while a background task deletes the temp directory.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ D. PER-BLOCK LOOP ============ -->
+<section class="anchor" id="block-loop">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Translate</p>
+      <h2><span class="num">D</span>The per-block translation loop</h2>
+      <p>Every block is either skipped (source kept by design), translated cleanly, or rejected
+        after one retry (source kept for safety). Nothing is ever silently dropped — the failure
+        mode is always "original text remains", never "text disappears".</p>
+    </div>
+
+    <div class="fc-legend">
+      <span><i class="k term keep"></i> start / end</span>
+      <span><i class="k proc"></i> step</span>
+      <span><i class="k dec"></i> decision</span>
+      <span><i class="k proc stop"></i> rejected (source kept)</span>
+    </div>
+
+    <div class="fc-scroll">
+      <svg class="fc" width="800" height="770" viewBox="0 0 800 770" role="img" aria-label="Per-block translation loop with skip rules, suspicion checks, and a single retry">
+        <defs>
+          <marker id="arrow-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+          </marker>
+        </defs>
+
+        <rect x="130" y="16" width="240" height="52" rx="26" class="node-shape term n-understand"/>
+        <text class="node-text strong" text-anchor="middle"><tspan x="250" y="47">Blocks in reading order</tspan></text>
+
+        <polygon points="250,92 340,128 250,164 160,128" class="node-shape dec n-ground"/>
+        <text class="node-text" text-anchor="middle"><tspan x="250" y="132" class="ttl">Blocks left?</tspan></text>
+
+        <polygon points="250,188 380,228 250,268 120,228" class="node-shape dec n-ground"/>
+        <text class="node-text" text-anchor="middle"><tspan x="250" y="222" class="ttl">Protected-only, contact,</tspan><tspan x="250" y="238" class="ttl">or reference block?</tspan></text>
+
+        <rect x="480" y="204" width="200" height="48" rx="8" class="node-shape n-finalize"/>
+        <text class="node-text" text-anchor="middle"><tspan x="580" y="233">Source kept by design</tspan></text>
+
+        <rect x="140" y="292" width="220" height="56" rx="8" class="node-shape n-ground"/>
+        <text class="node-text" text-anchor="middle"><tspan x="250" y="315" class="ttl">Translate block</tspan><tspan x="250" y="333">strict single-snippet call, T=0</tspan></text>
+
+        <polygon points="250,372 350,408 250,444 150,408" class="node-shape dec n-ground"/>
+        <text class="node-text" text-anchor="middle"><tspan x="250" y="412" class="ttl">Empty result?</tspan></text>
+
+        <rect x="480" y="384" width="200" height="48" rx="8" class="node-shape err"/>
+        <text class="node-text" text-anchor="middle"><tspan x="580" y="413">Rejected — source kept</tspan></text>
+
+        <polygon points="250,468 370,508 250,548 130,508" class="node-shape dec n-ground"/>
+        <text class="node-text" text-anchor="middle"><tspan x="250" y="504" class="ttl">Suspicious?</tspan><tspan x="250" y="520">leak · loop · token loss</tspan></text>
+
+        <rect x="470" y="460" width="220" height="52" rx="8" class="node-shape n-generate"/>
+        <text class="node-text" text-anchor="middle"><tspan x="580" y="481" class="ttl">Retry once (strict)</tspan><tspan x="580" y="499">re-run every check</tspan></text>
+
+        <polygon points="580,536 670,572 580,608 490,572" class="node-shape dec n-generate"/>
+        <text class="node-text" text-anchor="middle"><tspan x="580" y="576" class="ttl">Clean now?</tspan></text>
+
+        <rect x="480" y="640" width="200" height="48" rx="8" class="node-shape err"/>
+        <text class="node-text" text-anchor="middle"><tspan x="580" y="669">Rejected — source kept</tspan></text>
+
+        <rect x="140" y="600" width="220" height="52" rx="8" class="node-shape n-ground"/>
+        <text class="node-text" text-anchor="middle"><tspan x="250" y="631" class="ttl">Store translation</tspan></text>
+
+        <rect x="130" y="700" width="240" height="52" rx="26" class="node-shape term n-generate"/>
+        <text class="node-text strong" text-anchor="middle"><tspan x="250" y="731">Write-back begins</tspan></text>
+
+        <!-- main edges -->
+        <path d="M250,68 V86" class="edge" marker-end="url(#arrow-b)"/>
+        <path d="M250,164 V182" class="edge e-yes" marker-end="url(#arrow-b)"/>
+        <path d="M250,268 V286" class="edge e-no" marker-end="url(#arrow-b)"/>
+        <path d="M250,348 V366" class="edge" marker-end="url(#arrow-b)"/>
+        <path d="M250,444 V462" class="edge e-yes" marker-end="url(#arrow-b)"/>
+        <path d="M250,548 V594" class="edge e-yes" marker-end="url(#arrow-b)"/>
+
+        <!-- branch edges -->
+        <path d="M380,228 H474" class="edge e-yes" marker-end="url(#arrow-b)"/>
+        <path d="M350,408 H474" class="edge e-no" marker-end="url(#arrow-b)"/>
+        <path d="M370,508 H464" class="edge e-no" marker-end="url(#arrow-b)"/>
+        <path d="M580,512 V530" class="edge" marker-end="url(#arrow-b)"/>
+        <path d="M490,572 H420 V614 H366" class="edge e-yes" marker-end="url(#arrow-b)"/>
+        <path d="M580,608 V634" class="edge e-no" marker-end="url(#arrow-b)"/>
+
+        <!-- return rail -->
+        <path d="M680,228 H740" class="edge e-loop"/>
+        <path d="M680,408 H740" class="edge e-loop"/>
+        <path d="M680,664 H740" class="edge e-loop"/>
+        <path d="M360,634 H740" class="edge e-loop"/>
+        <path d="M740,664 V128" class="edge e-loop"/>
+        <path d="M740,128 H346" class="edge e-loop" marker-end="url(#arrow-b)"/>
+
+        <!-- exit -->
+        <path d="M160,128 H70 V726 H124" class="edge" marker-end="url(#arrow-b)"/>
+
+        <!-- labels -->
+        <text class="elbl" text-anchor="middle"><tspan x="272" y="178">yes</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="112" y="120">no</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="416" y="220">yes</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="272" y="282">no</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="410" y="400">yes</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="272" y="458">no</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="410" y="500">yes</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="272" y="566">no</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="452" y="564">yes</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="602" y="628">no</tspan></text>
+        <text class="elbl" text-anchor="middle"><tspan x="600" y="120">next block</tspan></text>
+      </svg>
+    </div>
+    <p class="fc-cap">The dashed orange rail is the per-block loop: skipped, rejected, and stored
+      blocks all return for the next one. "Suspicious" means any of: identical to the source, a
+      long exact overlap with it, a degenerate repetition loop, English stopword leakage into a
+      non-English target, or a mangled protection token. Retries fire only for blocks longer than
+      16 characters; token loss forces a retry unconditionally.</p>
+  </div>
+</section>
+
+<!-- ============ E. BACKENDS ============ -->
+<section class="anchor" id="backends">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Translate</p>
+      <h2><span class="num">E</span>Three translation backends, one contract</h2>
+      <p>The <code>engine</code> field / <code>--engine</code> flag selects who translates the text.
+        All three implement the same four methods (<code>detect_language</code>,
+        <code>translate_single_strict</code>, <code>translate_strings_batch</code>,
+        <code>translate_nodes</code>), so the pipelines never care which one is running
+        (<code>translator_factory.py</code>).</p>
+    </div>
+
+    <div class="modes">
+      <div class="mode" style="--m: var(--intake)">
+        <h4>llm <span style="color:var(--muted);font-weight:400">· default</span></h4>
+        <p>OpenAI-compatible endpoint (vLLM, often RunPod). Batch JSON prompts for segments/nodes;
+          strict single-snippet prompt for the retry path. JSON responses are fence-unwrapped with a
+          regex partial-recovery fallback.</p>
+        <div class="tags"><span class="tag src">all 24 languages</span><span class="tag">temp 0.1 / 0.0 strict</span><span class="tag">batch 50</span></div>
+      </div>
+      <div class="mode" style="--m: var(--understand)">
+        <h4>deepl</h4>
+        <p>DeepL only. Errors (quota, rate limit, auth) are <em>surfaced, never hidden</em>. English
+          and Portuguese targets need regional variants — <code>DEEPL_EN_VARIANT</code> /
+          <code>DEEPL_PT_VARIANT</code>, defaulting to <code>EN-GB</code> / <code>PT-PT</code>.</p>
+        <div class="tags"><span class="tag stop">no Maltese (mt)</span><span class="tag stop">no Irish (ga)</span><span class="tag">hard 400 for those targets</span></div>
+      </div>
+      <div class="mode" style="--m: var(--ground)">
+        <h4>adaptive</h4>
+        <p>DeepL first, LLM on <b>any</b> DeepL error. An unsupported language falls back per-call
+          only; a genuine service failure sets a sticky "DeepL down" flag so the rest of the run goes
+          straight to the LLM instead of hammering an exhausted quota.</p>
+        <div class="tags"><span class="tag src">all 24 languages</span><span class="tag">sticky failover</span><span class="tag">lazy LLM init</span></div>
+      </div>
+    </div>
+
+    <div class="branches" style="--phase:var(--ground); margin-top:18px">
+      <div class="branch"><span class="cond">adaptive · mt/ga target</span><p><code>UnsupportedDeepLLanguageError</code> → this call goes to the LLM; DeepL stays enabled for everything else.</p></div>
+      <div class="branch"><span class="cond">adaptive · quota/rate/auth</span><p>Any <code>deepl.DeepLException</code>/connection error → call falls back <em>and</em> <code>_deepl_down</code> sticks for the rest of the document.</p></div>
+      <div class="branch"><span class="cond">every engine</span><p>The suspicion checks and retry loop in section D run identically regardless of backend — DeepL output is verified too.</p></div>
+    </div>
+
+    <div class="callout good">
+      <p><b>The backend only controls the text-translation step.</b> Text embedded in images is
+        always OCR'd by the vision LLM (DeepL cannot OCR); the translate-after-OCR step then honours
+        the selected engine. Source-language detection also routes through the selected backend.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ F. NATIVE FORMATS ============ -->
+<section class="anchor" id="native">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Extract · Translate · Render</p>
+      <h2><span class="num">F</span>Native formats: txt, docx, pptx (and legacy doc/ppt)</h2>
+      <p>Non-PDF formats keep their native container — the file that comes back is the same format
+        that went in, with only human-readable text replaced. All three share
+        <code>translate_text_segments.py</code>: batch translation (≤ 40 segments per call), source
+        detection when needed, and the same per-segment retry guard as the PDF path.</p>
+    </div>
+
+    <div class="lanes">
+      <div class="lane">
+        <div class="lane-h"><h4>.txt</h4><div class="sub">translate_txt.py</div></div>
+        <ol>
+          <li>Decode bytes trying <code>utf-8 → utf-8-sig → cp1252 → latin-1</code>.</li>
+          <li>Split into segments on blank lines, <em>keeping</em> the blank lines as segments.</li>
+          <li>Translate non-empty segments in batches; blank segments pass through untouched.</li>
+          <li>Rejoin in order → paragraph structure and spacing survive exactly.</li>
+        </ol>
+      </div>
+      <div class="lane">
+        <div class="lane-h"><h4>.docx</h4><div class="sub">translate_docx.py</div></div>
+        <ol>
+          <li>Open the OOXML zip; parse <code>document.xml</code>, footnotes, endnotes, comments, headers, footers.</li>
+          <li>Per paragraph, collect its <code>w:t</code> runs and join them into one string.</li>
+          <li>Translate the joined text; write it into the <em>first</em> run, blank the rest (per-run styling of later runs is traded for translation coherence).</li>
+          <li>Rebuild the zip byte-for-byte except the touched XML parts — styles, images, tables intact.</li>
+        </ol>
+      </div>
+      <div class="lane">
+        <div class="lane-h"><h4>.pptx</h4><div class="sub">translate_pptx.py</div></div>
+        <ol>
+          <li>Same zip surgery over <code>ppt/slides/slide*.xml</code> and <code>notesSlides/</code>.</li>
+          <li>Per <code>a:p</code> paragraph, join its <code>a:t</code> runs, translate, first-run write-back.</li>
+          <li>Layouts, masters, media, and animations are copied through unchanged.</li>
+        </ol>
+      </div>
+      <div class="lane">
+        <div class="lane-h"><h4>.doc / .ppt (legacy)</h4><div class="sub">convert_legacy_office.py</div></div>
+        <ol>
+          <li><code>soffice --headless --convert-to docx|pptx</code> (LibreOffice required; clear error if missing).</li>
+          <li>The converted file then takes the normal <code>.docx</code>/<code>.pptx</code> lane.</li>
+          <li>Output keeps the modern extension — a <code>.doc</code> upload returns a <code>.docx</code>.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ G. HTML ENGINE + IMAGE TEXT ============ -->
+<section class="anchor" id="advanced">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Advanced / fallback</p>
+      <h2><span class="num">G</span>The HTML engine and image-embedded text</h2>
+      <p>Two capabilities live behind the hidden <code>/translate/pdf/advanced</code> route (and CLI
+        flags). Neither is part of the public contract.</p>
+    </div>
+
+    <div class="lanes">
+      <div class="lane">
+        <div class="lane-h"><h4>html layout engine</h4><div class="sub">convert_pdf_to_html.py · translator_llm.py · render_html_to_pdf.py</div></div>
+        <ol>
+          <li>Read the first page's size (<code>pdf_page_size.py</code>) so the output matches.</li>
+          <li>Poppler <code>pdftohtml -c -s -noframes</code> → one position-preserving HTML file.</li>
+          <li>Either translate every text node (BeautifulSoup <code>NavigableString</code> walk, whitespace preserved around each node) <em>or</em> apply an exact-match JSON replacement mapping (<code>replace_html_text.py</code>) — mutually exclusive with <code>target_lang</code>.</li>
+          <li>Render back to PDF with Playwright Chromium (auto-installed on first use); when text changed, overflow adjustment and background-image hiding are enabled.</li>
+        </ol>
+      </div>
+      <div class="lane">
+        <div class="lane-h"><h4>image-text translation (experimental)</h4><div class="sub">translate_pdf_image_text.py · vision_llm.py</div></div>
+        <ol>
+          <li>For each embedded image ≥ 80×50 pt, render a 2× crop.</li>
+          <li>The vision LLM returns figure-embedded text blocks as JSON with bounding boxes normalized 0–1000 (body text is explicitly excluded from the prompt).</li>
+          <li>Up to 20 blocks per region are translated by the selected backend, with the same retry guard.</li>
+          <li>Each block's rect is white-filled and the translation overlaid, shrinking the font up to 6× (×0.92) to fit.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="callout">
+      <p><b>Off by default for a reason.</b> Overlaying text on raster images is destructive to the
+        image region and OCR boxes are approximate — the public endpoint always runs with
+        <code>translate_image_text=False</code>. Enable it only via the advanced route/CLI when the
+        document's figures carry essential text.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ H. NUMBERS ============ -->
+<section class="anchor" id="numbers">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Reference</p>
+      <h2><span class="num">H</span>The numbers</h2>
+      <p>Thresholds and knobs as they exist in code today. Most are engineering judgment tuned
+        against the regression fixtures, not measured optima.</p>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Value</th><th>Where</th><th>What it controls</th></tr></thead>
+        <tbody>
+          <tr><td class="num">2.4× / +120</td><td><code>_looks_degenerate_translation</code></td><td>Output longer than max(2.4 × source, source + 120 chars) is a runaway loop → retry/reject. EU-language expansion tops out ~1.5×, so this only fires on pathology.</td></tr>
+          <tr><td class="num">&lt; 0.4 · ≥ 3</td><td><code>_looks_degenerate_translation</code></td><td>For ≥ 16 words: unique-word ratio below 0.4, or any 4-gram repeated ≥ 3 times → repetition loop.</td></tr>
+          <tr><td class="num">28 / 45% / 0.82</td><td><code>should_retry_translation</code></td><td>For sources ≥ 40 chars: a common run ≥ max(28, 45% of source) or overall similarity &gt; 0.82 means source text leaked into the "translation".</td></tr>
+          <tr><td class="num">6 / 22%</td><td><code>should_retry_translation</code></td><td>en → non-en with ≥ 10 tokens: ≥ 6 English stopwords making up ≥ 22% of tokens → leakage.</td></tr>
+          <tr><td class="num">16 chars · 1 retry</td><td><code>translate_pdf_direct</code></td><td>Suspicion retries only fire for blocks longer than 16 chars, and exactly once. A lost <code>ZXQNT…</code> token forces a retry regardless of length.</td></tr>
+          <tr><td class="num">7.0 pt / ×0.92</td><td><code>_plan_block_write</code></td><td>Font-shrink search floor and per-step shrink factor (titles/display text start at ≥ 8.0 pt but share the 7.0 pt floor); line-height candidates are the kind default, 1.0, and 0.94.</td></tr>
+          <tr><td class="num">spare ≥ 0</td><td><code>_plan_block_write</code></td><td>A placement is accepted only when <code>insert_textbox</code> reports a genuine fit — it renders <em>nothing</em> on overflow, so a lenient threshold would silently blank text.</td></tr>
+          <tr><td class="num">12 / 8% / 25%</td><td><code>pdf_content_policy.py</code></td><td>Formula-heavy rejection triggers (density / spread / dense-page) — see stage 1.</td></tr>
+          <tr><td class="num">50 · 8192 · 600 s</td><td><code>LLMTranslator</code></td><td>Batch size (<code>LLM_BATCH_SIZE</code>), max tokens (<code>DEFAULT_NUM_PREDICT</code>, values &lt; 4096 forced to 8192), per-request timeout (<code>PER_REQUEST_TIMEOUT</code>).</td></tr>
+          <tr><td class="num">24 / 12 / 320 / 10</td><td><code>_prepare_language_detection_samples</code></td><td>Detection samples: ≥ 24 chars and ≥ 12 letters each, aggregated into ~320-char clumps, max 10 sent to the model.</td></tr>
+          <tr><td class="num">16 / 12 / 5 / 42%</td><td><code>_detect_multicolumn_page</code></td><td>Two-column layout requires ≥ 16 lines, ≥ 12 narrow ones, ≥ 5 per half, and average line width ≤ 42% of the page.</td></tr>
+          <tr><td class="num">80×50 pt · 20</td><td><code>translate_pdf_image_text.py</code></td><td>Minimum image size worth OCR'ing, and the per-region cap on translated text blocks.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ I. FAILURE MODES ============ -->
+<section class="anchor" id="failures">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Reference</p>
+      <h2><span class="num">I</span>Failure modes</h2>
+      <p>What a caller can see and why. The design principle throughout: fail loudly before
+        translating, and when a single block fails mid-run, keep its source text rather than drop
+        content.</p>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Status</th><th>Trigger</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill e401">401</span></td><td>Missing/wrong basic auth</td><td>Applies to <em>every</em> route, including <code>/docs</code> and <code>/openapi.json</code>.</td></tr>
+          <tr><td><span class="pill e400">400</span></td><td>Unsupported extension</td><td>Anything outside <code>.pdf .txt .doc .docx .ppt .pptx</code> — including the deliberately rejected structured formats.</td></tr>
+          <tr><td><span class="pill e400">400</span></td><td>Missing/invalid <code>target_lang</code></td><td>Must be one of the 24 EU codes; the error lists them.</td></tr>
+          <tr><td><span class="pill e400">400</span></td><td><code>source_lang == target_lang</code></td><td>Only when both are supplied explicitly.</td></tr>
+          <tr><td><span class="pill e400">400</span></td><td>Invalid <code>engine</code></td><td>Anything other than <code>llm</code> / <code>deepl</code> / <code>adaptive</code> (or empty).</td></tr>
+          <tr><td><span class="pill e400">400</span></td><td><code>deepl</code> engine + <code>mt</code>/<code>ga</code> target</td><td>Fast fail with a pointer to <code>llm</code>/<code>adaptive</code>; adaptive silently falls back instead.</td></tr>
+          <tr><td><span class="pill e400">400</span></td><td>Formula-heavy PDF</td><td><code>PdfContentPolicyError</code>, raised before any model call.</td></tr>
+          <tr><td><span class="pill e500">500</span></td><td>Pipeline failure</td><td>Wrapped as "Translation pipeline failed: …". Includes: detected source equals target, no translatable text found in the PDF, LibreOffice missing for <code>.doc/.ppt</code>, and DeepL service errors in <code>deepl</code> mode.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout good">
+      <p><b>Inside a run, failure is graceful.</b> A block whose translation is rejected or cannot be
+        placed keeps its source text on the page (counted in <code>blocks_rejected</code> /
+        <code>blocks_unplaced</code>); a partially DeepL-failed adaptive run continues on the LLM. The
+        only mid-run hard stop is the LLM API being unreachable.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Source of truth: <code>app/api/routes/translate.py</code> (HTTP surface),
+      <code>app/services/document_translate_service.py</code> + <code>pdf_translate_service.py</code>
+      (validation &amp; orchestration), <code>app/pipeline/translate_pdf_direct.py</code> (direct engine),
+      <code>extract_native_blocks.py</code> (structure), <code>translator_llm.py</code> /
+      <code>translator_deepl.py</code> / <code>translator_adaptive.py</code> (backends),
+      <code>protected_text.py</code> + <code>pdf_content_policy.py</code> (guard rails),
+      <code>fonts.py</code> (glyph fallback). Prose companions: <code>ARCHITECTURE.md</code>,
+      <code>README.md</code>, <code>TESTING.md</code>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

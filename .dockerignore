@@ -1,25 +1,19 @@
-.git
-.gitignore
-.idea
-.vscode
-.venv
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.log
-.env
-.pytest_cache/
-.mypy_cache/
-.coverage
-.coverage.*
-build_and_push.sh
-pull_and_restart.sh
-work/
-output/
-input/
-tests/
-feedback/
-tmp/
-temp/
-htmlcov/
+# Allowlist: exclude everything by default, then re-include only what the
+# runtime image needs. New files are excluded unless explicitly added below,
+# which keeps the build context minimal and stops stray files/secrets leaking
+# into the image. `*` also matches dotfiles (.git, .env, .venv, ...).
+*
+
+# Application code and its dependency manifest (the Dockerfile COPYs
+# requirements.txt on its own first, then the rest).
+!app/
+!cli.py
+!requirements.txt
+
+# Re-exclude bytecode that lives inside the re-included app/ tree. These come
+# AFTER the re-includes because the last matching pattern wins; a bare
+# __pycache__/ would only match the context root, so the **/ prefix is required.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd

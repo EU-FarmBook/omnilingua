@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniLingua — Questions &amp; Answers</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --card: #ffffff;
+    --ink: #2b2b28;
+    --muted: #6b6b64;
+    --accent: #2f7d4f;
+    --accent-soft: #e8f3ec;
+    --border: #e3e2da;
+    --code-bg: #f2f1ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1d1a;
+      --card: #24261f;
+      --ink: #e8e7df;
+      --muted: #a3a294;
+      --accent: #7fc79b;
+      --accent-soft: #2a3a2f;
+      --border: #3a3c33;
+      --code-bg: #2e3028;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+  header h1 { font-size: 1.7rem; margin: 0 0 .3rem; }
+  header p.sub { color: var(--muted); margin: 0 0 2rem; }
+  .qa {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 2rem;
+  }
+  .qa h2 {
+    font-size: 1.25rem;
+    margin: 0 0 1rem;
+    color: var(--accent);
+  }
+  .qa h2 .qmark {
+    display: inline-block;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 8px;
+    padding: 0 .55rem;
+    margin-right: .5rem;
+    font-size: 1rem;
+  }
+  .qa h3 { font-size: 1.02rem; margin: 1.6rem 0 .5rem; }
+  ol.steps { padding-left: 1.3rem; }
+  ol.steps > li { margin-bottom: .8rem; }
+  code {
+    background: var(--code-bg);
+    border-radius: 5px;
+    padding: .1rem .35rem;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: .86em;
+  }
+  .path { color: var(--muted); font-size: .85rem; }
+  details.support {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    margin: .7rem 0;
+    padding: .55rem .95rem;
+    background: var(--bg);
+  }
+  details.support summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  details.support summary:hover { color: var(--accent); }
+  details.support[open] { padding-bottom: .9rem; }
+  .flow {
+    background: var(--code-bg);
+    border-radius: 9px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: .82rem;
+    white-space: pre;
+    line-height: 1.5;
+  }
+  .tip {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+    padding: .7rem 1rem;
+    border-radius: 0 8px 8px 0;
+    margin: 1rem 0;
+    font-size: .95rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>🌍 OmniLingua — Questions &amp; Answers</h1>
+  <p class="sub">A growing FAQ about how the <code>omnilingua</code> document-translation service
+  works internally. Each main question includes supporting questions you can expand for more
+  detail. Diagram companion: <code>docs/flow-technical.html</code>.</p>
+</header>
+
+<!-- ============================================================ -->
+<!-- Q1: What happens when a document arrives?                    -->
+<!-- ============================================================ -->
+<section class="qa" id="q1">
+  <h2><span class="qmark">Q1</span>What happens when a document arrives — what is the <em>first</em> thing that happens?</h2>
+
+  <p><strong>Short answer:</strong> the upload lands on the single public endpoint
+  <code>POST /translate/document</code> (defined in <code>app/api/routes/translate.py:139</code>),
+  behind HTTP <strong>basic auth that covers every route</strong> — including <code>/docs</code>
+  and <code>/openapi.json</code>. Before the file is even read, the request is validated:
+  is the extension supported (<code>.pdf .txt .doc .docx .ppt .pptx</code>), is
+  <code>target_lang</code> one of the 24 official EU language codes, is the optional
+  <code>engine</code> valid, and — if a <code>source_lang</code> was given — is it different from
+  the target? Any failure is an explicit <code>400</code> with a human-readable reason.</p>
+
+  <p>Only then is the file spooled to a private temp directory (with a sanitized filename) and
+  routed purely by extension: PDFs go to the direct PyMuPDF pipeline, <code>.txt/.docx/.pptx</code>
+  to native translation, and legacy <code>.doc/.ppt</code> through a LibreOffice conversion first.
+  The translated file is streamed back as a download, and a background task deletes the temp
+  directory after the response. <span class="path">(app/services/document_translate_service.py:55–192)</span></p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>What routes exist besides <code>/translate/document</code>?</summary>
+    <p>Three others. <code>GET /health</code> is the liveness check. <code>POST /translate/pdf</code>
+    and <code>POST /translate/pdf/advanced</code> are <strong>deprecated, hidden</strong> routes
+    (<code>include_in_schema=False</code>) kept for older clients and internal experiments — the
+    advanced one exposes PDF-only options the public API deliberately does not: the HTML layout
+    engine, JSON text-mapping mode, saving intermediate HTML, and experimental image-text
+    translation. New integrations must use <code>/translate/document</code> only.
+    <span class="path">(translate.py:92, 167)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>How does authentication work?</summary>
+    <p>HTTP basic auth (<code>BASIC_AUTH_USERNAME</code>/<code>BASIC_AUTH_PASSWORD</code>) is
+    attached as a FastAPI dependency on the <em>application itself</em>, so every route inherits
+    it — there is no unauthenticated surface at all. Even the Swagger UI and the OpenAPI schema
+    are re-exposed through custom auth-guarded handlers. A small script injected into the Swagger
+    page sets the file input's <code>accept</code> attribute so the browser's file picker offers
+    only the supported document types. <span class="path">(app/main.py:37–88, app/core/auth.py)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What exactly does validation check, in order?</summary>
+    <ol class="steps">
+      <li>A filename is present and its extension is in the supported set.</li>
+      <li><code>target_lang</code> is present, and both language fields normalize to a valid
+        two-letter EU code — regional forms like <code>pt-BR</code> or <code>de_DE</code> collapse
+        to their base code first. <span class="path">(app/core/languages.py:40–64)</span></li>
+      <li><code>engine</code> is <code>llm</code>, <code>deepl</code>, or <code>adaptive</code>
+        (empty falls back to the <code>TRANSLATION_ENGINE</code> env default, which itself
+        defaults to <code>llm</code>).</li>
+      <li>If both languages were supplied, they must differ.</li>
+      <li>If the engine is <code>deepl</code> and the target is Maltese (<code>mt</code>) or Irish
+        (<code>ga</code>), the request fails fast with a pointer to <code>llm</code>/<code>adaptive</code>
+        — DeepL does not offer those languages, so there is no point doing any work.</li>
+    </ol>
+    <p><span class="path">(document_translate_service.py:55–106, app/core/engines.py:29–53)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why are JSON, CSV, and XLSX rejected instead of supported?</summary>
+    <p>Deliberate policy, documented under "Structured Files Guidance" in the README: translating
+    structured data <em>in place</em> is dangerous. JSON keys, dataset identifiers, enums, codes,
+    and programmatic column headers must never be translated — doing so breaks parsing, joins,
+    and downstream pipelines — while only the human-facing <em>values</em> may be. That requires a
+    dedicated extract-and-rebuild design per format, not a generic text pass, so these formats are
+    refused until such support exists. Don't "just add" them.</p>
+  </details>
+
+  <details class="support">
+    <summary>What happens to the uploaded file on disk?</summary>
+    <p>It is written into a fresh <code>tempfile.mkdtemp</code> directory with a sanitized stem
+    (non-alphanumeric characters replaced, capped at 120 chars — so a hostile filename can't
+    escape the directory). The output is auto-named <code>&lt;stem&gt;_&lt;target_lang&gt;&lt;ext&gt;</code>;
+    legacy inputs keep the modernized extension (a <code>.doc</code> upload returns a
+    <code>.docx</code>). After the <code>FileResponse</code> is sent, a FastAPI background task
+    removes the whole temp tree — nothing is retained.
+    <span class="path">(document_translate_service.py:31–52, 123–136)</span></p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q2: Formula-heavy rejection                                  -->
+<!-- ============================================================ -->
+<section class="qa" id="q2">
+  <h2><span class="qmark">Q2</span>Why are some PDFs rejected before translation even starts?</h2>
+
+  <p><strong>Short answer:</strong> because translating mathematics garbles it. Before any model
+  is called, <code>ensure_pdf_translation_allowed</code> scans every page's text lines for three
+  signals: math symbols (<code>= ∑ ∫ √ ≤ ≥ ≈ ∂ ×</code> …), trailing equation numbers like
+  <code>(3.1)</code>, and math function calls (<code>sin( log( argmax_ exp(</code> …). If the
+  document looks formula-heavy overall, the request is refused with HTTP 400 and the message
+  <em>"PDF translation is not supported for formula-heavy or equation-heavy documents."</em>
+  <span class="path">(app/pipeline/pdf_content_policy.py:79–131)</span></p>
+
+  <p>The gate runs for <em>both</em> PDF layout engines — the direct pipeline calls it as its very
+  first step, and the HTML-engine path calls it before conversion — so there is no route around
+  it. <span class="path">(translate_pdf_direct.py:509, pdf_translate_service.py:149)</span></p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>What makes a single line "formula-like"?</summary>
+    <p>A line qualifies when any of these hold: it carries an equation number plus symbols or
+    digits; it contains a math function plus at least one symbol or digit; it has ≥ 3 math
+    symbols outright; or its symbol+digit density is high (≥ 35% of characters) while carrying
+    almost no real words. Ordinary prose with an occasional "=" doesn't trip it — the rules
+    require either repetition or density. <span class="path">(pdf_content_policy.py:47–76)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>When does the whole document get rejected?</summary>
+    <p>Three independent triggers, any one suffices:</p>
+    <ol class="steps">
+      <li><strong>Density:</strong> ≥ 12 formula lines <em>and</em> they make up ≥ 8% of all text lines.</li>
+      <li><strong>Spread:</strong> a document of ≥ 3 pages with ≥ 8 formula lines appearing on ≥ 25% of its pages.</li>
+      <li><strong>Dense page:</strong> ≥ 12 formula lines total with ≥ 8 concentrated on a single page.</li>
+    </ol>
+    <p><span class="path">(pdf_content_policy.py:102–110)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why reject the whole document instead of skipping the equations?</summary>
+    <p>Because the direct engine redacts and rewrites <em>regions</em> of the page. Inline math
+    is interleaved with prose in the same lines and blocks; skipping it reliably would require
+    formula detection at sub-line precision, and getting it slightly wrong means either
+    translated equations (nonsense) or redacted-but-unreplaced text (data loss). For a
+    formula-heavy paper the honest answer is "not supported" — a clean 400 the caller can act
+    on — rather than a subtly corrupted output.</p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q3: PDF structure extraction                                 -->
+<!-- ============================================================ -->
+<section class="qa" id="q3">
+  <h2><span class="qmark">Q3</span>A PDF has no paragraphs — how does the service reconstruct the document's structure?</h2>
+
+  <p><strong>Short answer:</strong> PyMuPDF hands over individual <em>lines</em> with their
+  coordinates, font, size, colour, and writing direction. <code>extract_native_blocks.py</code>
+  then rebuilds paragraphs by merging consecutive lines — but only when geometry and typography
+  both agree they belong together — and tags every resulting block with a <code>kind</code>
+  (<code>title</code>, <code>paragraph</code>, <code>bullet</code>, <code>caption</code>,
+  <code>table</code>, <code>reference</code>, …) that later stages use to decide how the block
+  may be translated and re-laid-out.</p>
+
+  <p>The same module detects two-column layouts and re-orders blocks into human reading order
+  (full-width header → left column → right column → full-width middle → footer), infers whether
+  a block was centered, and maps rotated (vertical) text to a rotation the writer can reproduce.
+  Getting this right is what makes the output <em>look like the original</em> — everything
+  downstream depends on these blocks.</p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>Why is line merging needed at all?</summary>
+    <p>Translation changes text length, and length changes line breaks. If each source line were
+    translated separately, every line would be a fixed-width prison: words could not reflow
+    across lines, so each line's translation gets squeezed (or shrunk) independently —
+    the "ransom note" effect. Merging a paragraph's lines into one block lets the translation
+    reflow naturally inside the paragraph's rectangle. An earlier, stricter merge rule that split
+    every body line on tightly-leaded posters is explicitly called out in a comment as the cause
+    of exactly that failure. <span class="path">(extract_native_blocks.py:110–117)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What must be true for two lines to merge?</summary>
+    <p>All of: same page, same raw PyMuPDF block, same font name, no rotation, font-size delta
+    ≤ max(0.75 pt, 8%), left edges within ~1.5 em, horizontal overlap ≥ 35% of the narrower
+    line, and a plausible vertical gap — including up to about <em>half a line of overlap</em>,
+    because PyMuPDF line boxes span ascender to descender and normal leading makes adjacent
+    boxes overlap slightly. And none of the veto rules may fire: the previous line ends in
+    "<code>:</code>" (a label), either line looks like a table row or a bibliography entry,
+    either looks like a header/footer, the next line starts a new structural block (bullet,
+    "Figure…", "3.1 Results"), or a sentence boundary coincides with extra leading. In
+    multi-column pages, lines must also share a column.
+    <span class="path">(extract_native_blocks.py:87–150)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>How are two-column pages detected and ordered?</summary>
+    <p>A page is treated as two-column only on strong evidence: ≥ 16 lines, of which ≥ 12 are
+    "narrow" (less than 60% of page width), at least 5 narrow lines on each half, and an average
+    narrow-line width ≤ 42% of the page. Wide blocks and the header band stay column-less. The
+    sort then emits: full-width blocks above the columns, the whole left column, the whole right
+    column, full-width blocks between/below. Hyphenated line ends are joined without the hyphen
+    when merging. <span class="path">(extract_native_blocks.py:365–452)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What block kinds exist, and why do they matter?</summary>
+    <p><code>title</code>, <code>abstract</code>, <code>keywords</code>, <code>caption</code>,
+    <code>table</code>, <code>reference</code>, <code>bullet</code>, <code>label</code>,
+    <code>paragraph</code>, and <code>line</code>. The kind drives three later decisions:
+    whether the block is translated at all (<code>reference</code> never is), how much its box
+    may grow to absorb translation expansion (paragraphs and abstracts get generous height,
+    captions and table rows almost none), and typography (titles keep larger minimum sizes and
+    tighter line-height). Classification mixes text cues ("Abstract", "Fig.", bullet markers —
+    including tab-indented bullets, which once masqueraded as table rows) with geometry (a wide
+    block near the page top in large type is a title; posters get a taller title band).
+    <span class="path">(extract_native_blocks.py:165–352)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>How does it know where the bibliography starts?</summary>
+    <p>Per-line patterns (<code>[12]</code>, "Author (2019)" + DOI/URL…) catch some entries, but
+    citation styles vary too much for that alone. So once a <em>standalone</em> heading —
+    "References", "Bibliography", "Literature cited", "Works cited" — appears in reading order,
+    every block after it is reclassified as <code>reference</code>. The rule is guarded to the
+    document's latter half, so an inline "References:" mention early in the body can't
+    accidentally mute the rest of the document. <span class="path">(extract_native_blocks.py:205–254)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What about lines that never become blocks at all?</summary>
+    <p>Lines with fewer than 2 letters, or more digits than letters — page numbers, y-axis
+    values, "42%", dates — are filtered out before block creation
+    (<code>is_translatable_native_text</code>). They still matter later: their rectangles are
+    collected separately (<code>collect_untranslatable_line_rects</code>) so that when a
+    neighbouring block is redacted, the redaction is trimmed away from them and they survive on
+    the page. <span class="path">(extract_native_blocks.py:27–40, translate_pdf_direct.py:619–622)</span></p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q4: Source-language detection                                -->
+<!-- ============================================================ -->
+<section class="qa" id="q4">
+  <h2><span class="qmark">Q4</span>How does the service know what language the document is written in?</h2>
+
+  <p><strong>Short answer:</strong> it doesn't guess unless it has to. If the caller supplies
+  <code>source_lang</code>, that value is used as-is and detection never runs. Otherwise, the PDF's
+  own metadata language wins when it maps to an EU code; failing that, cleaned text samples from
+  the document are sent to the translation backend, which returns an ISO 639-1 code — with
+  <code>en</code> as the last-resort fallback. <span class="path">(translate_pdf_direct.py:515–519,
+  translator_llm.py:203–242)</span></p>
+
+  <p>If the detected (or declared) source equals the target, the run refuses to continue rather
+  than "translate" a document into its own language.</p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>Why are the detection samples cleaned first?</summary>
+    <p>Raw PDF lines are full of things that fool language detectors: URLs, email addresses,
+    number-dense rows, and fragments too short to carry signal. Samples must be ≥ 24 characters
+    with ≥ 12 letters, must not contain URLs/emails, and must not be digit-heavy; survivors are
+    concatenated into ~320-character clumps (max 10) so the model sees a few solid paragraphs of
+    prose instead of fifty scraps. <span class="path">(translator_llm.py:142–173)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>How does each backend actually detect?</summary>
+    <p>The <strong>LLM</strong> backend asks the text model directly — "respond with ONLY the ISO
+    639-1 code" at temperature 0 — and validates the reply against the 24 EU codes. The
+    <strong>DeepL</strong> backend has no detection API, so it translates the first sample's first
+    200 characters to English and reads the <code>detected_source_lang</code> DeepL reports.
+    The <strong>adaptive</strong> backend tries DeepL's method first, LLM on error. In every
+    case an unusable answer degrades to <code>en</code>.
+    <span class="path">(translator_llm.py:203–242, translator_deepl.py:65–86)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What happens when source and target turn out to be the same?</summary>
+    <p>It depends where it's caught. Both supplied explicitly → the API rejects it up front with
+    a 400. Detected mid-run in the direct PDF pipeline or the native document paths → a
+    <code>ValueError</code> aborts the run (surfaced by the API as a 500 "Translation pipeline
+    failed"). The HTML engine is the deliberate exception: it logs "mixed-language safe mode"
+    and returns the document <em>unchanged</em> instead of failing. And the bulk EU-matrix runner
+    treats it as success by design: when a target matches the detected source, the original file
+    is simply copied as that language's artifact, so every input still ends with a complete
+    24-language output set. <span class="path">(translate_pdf_direct.py:521–522,
+    translator_llm.py:582–586, run_all_eu_translations.sh)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Can a wrong declared source silently ruin a translation?</summary>
+    <p>Yes — and the README warns about exactly this for the bulk runner: set
+    <code>SOURCE_LANG</code> only when the <em>whole</em> input set is known to share one
+    language, because a wrong declared source mistranslates every non-matching document without
+    any error. When in doubt, leave <code>source_lang</code> empty and let detection run
+    per-document.</p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q5: Translation backends                                     -->
+<!-- ============================================================ -->
+<section class="qa" id="q5">
+  <h2><span class="qmark">Q5</span>Who does the actual translating — and what happens when DeepL fails mid-document?</h2>
+
+  <p><strong>Short answer:</strong> one of three interchangeable backends, chosen per request by
+  the <code>engine</code> field (or the <code>TRANSLATION_ENGINE</code> env default):
+  <code>llm</code> — the self-hosted OpenAI-compatible model (vLLM, often on RunPod);
+  <code>deepl</code> — DeepL only, with errors surfaced, never hidden; and <code>adaptive</code> —
+  DeepL first, falling back to the LLM on <em>any</em> DeepL error. All three implement the same
+  four-method contract (<code>detect_language</code>, <code>translate_single_strict</code>,
+  <code>translate_strings_batch</code>, <code>translate_nodes</code>), so the pipelines never know
+  or care which one is running. <span class="path">(app/pipeline/translator_factory.py:9–30)</span></p>
+
+  <p>The adaptive fallback is stateful: an unsupported-language error (Maltese/Irish) falls back
+  for <em>that call only</em>, but a genuine service failure — quota exhausted, rate limit, auth,
+  connection — sets a sticky "DeepL is down" flag, and the rest of the document goes straight to
+  the LLM instead of hammering a dead quota once per block.
+  <span class="path">(translator_adaptive.py:14–56)</span></p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>What do the LLM prompts look like?</summary>
+    <p>Two shapes. <strong>Batch:</strong> up to 50 snippets are sent as a JSON object
+    (<code>{"0": "text", …}</code>) with rules — translate only natural language; preserve
+    numbers, dates, emails, URLs, ALL-CAPS acronyms, and <code>ZXQNT…</code> tokens exactly;
+    reply with JSON only. The reply is fence-unwrapped, and if JSON parsing fails, a regex
+    salvages whatever <code>"id": "text"</code> pairs it can. <strong>Strict single:</strong> the
+    retry path sends one snippet at temperature 0 — "output only the translated text, do not
+    include the source, keep short fragments concise" — capped at 1,024 output tokens.
+    <span class="path">(translator_llm.py:260–425)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Where is the LLM configured, and what are the knobs?</summary>
+    <p><code>app/core/model_config.py</code> resolves <code>TEXT_MODEL_URL / _API_KEY / _NAME</code>
+    — with legacy fallback names (<code>TEXT_URL</code>, <code>RUNPOD_VLLM_HOST</code>,
+    <code>VLLM_MODEL</code>, …) that must keep working. Generation knobs:
+    <code>DEFAULT_NUM_PREDICT</code> (max tokens; values under 4,096 are forced up to 8,192),
+    <code>LLM_TEMPERATURE</code> (0.1 for batches, 0.0 for strict calls),
+    <code>LLM_BATCH_SIZE</code> (50), and <code>PER_REQUEST_TIMEOUT</code> (600 s).
+    <span class="path">(translator_llm.py:176–201)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What is special about DeepL's language handling?</summary>
+    <p>Two things. DeepL has no Maltese or Irish: in <code>deepl</code> mode those targets are a
+    hard 400 (checked up front <em>and</em> at call time); in <code>adaptive</code> mode they fall
+    back to the LLM per call. And DeepL requires regional variants for English and Portuguese
+    targets — configured via <code>DEEPL_EN_VARIANT</code> / <code>DEEPL_PT_VARIANT</code>,
+    defaulting to <code>EN-GB</code> / <code>PT-PT</code>. Keys come from
+    <code>DEEPL_API_KEY</code> / <code>DEEPL_SERVER_URL</code> (legacy:
+    <code>DEEPL_AUTH_KEY</code> / <code>DEEPL_API_URL</code>).
+    <span class="path">(app/core/engines.py:45–81, translator_deepl.py:22–63)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Does the engine choice change anything besides the text translation?</summary>
+    <p>Almost nothing — deliberately. It controls the text-translation step and language
+    detection, and that's all. Text embedded in <em>images</em> is always OCR'd by the vision
+    LLM (DeepL cannot OCR); the translate-after-OCR step then honours the selected engine. And
+    the quality guard rails of Q7 run identically on every backend's output — DeepL is verified
+    too. <span class="path">(translate_pdf_image_text.py:116–127)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why is the DeepL import lazy?</summary>
+    <p><code>translator_factory.get_translator</code> imports the DeepL modules only when a
+    DeepL-backed engine is actually requested, so the default LLM-only path never needs the
+    <code>deepl</code> package (or its credentials) at call time.
+    <span class="path">(translator_factory.py:13–30)</span></p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q6: Protected text and skip rules                            -->
+<!-- ============================================================ -->
+<section class="qa" id="q6">
+  <h2><span class="qmark">Q6</span>What stops the translator from mangling emails, URLs, and bibliographies?</h2>
+
+  <p><strong>Short answer:</strong> they are never shown to the translator in the first place.
+  Before a block is translated, <code>protect_nontranslatable_text</code> replaces every email
+  address, URL, and social <code>@handle</code> with an opaque token — <code>ZXQNT0QXZ</code>,
+  <code>ZXQNT1QXZ</code>, … — chosen to be meaningless in every language. The prompt orders the
+  model to preserve such tokens exactly, and after translation they are substituted back for the
+  originals. <span class="path">(app/pipeline/protected_text.py:45–77)</span></p>
+
+  <p>On top of tokenization, three whole-block skip rules keep entire categories out of the
+  translator: blocks that contain <em>nothing but</em> protected content, contact-identity blocks
+  (names attached to an email or handle), and every <code>reference</code> block — bibliographies
+  are canonical citations, and translating them breaks lookups. Skipped blocks keep their source
+  text on the page, untouched. <span class="path">(translate_pdf_direct.py:545–552)</span></p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>How does token restoration cope with model damage?</summary>
+    <p>Restoration is deliberately forgiving: it matches tokens with stray spaces
+    (<code>ZXQNT 0 QXZ</code>), missing suffixes (<code>ZXQNT0</code>), case changes, and even the
+    older token scheme in "translated" forms like <code>OLPROTEGIDO0</code> (the model once
+    translated the token prefix itself — hence the current consonant-soup design). If a token is
+    still unrecognizable after all that, the damage is <em>detected</em>:
+    <code>contains_protected_token</code> finding leftover token debris in the final text forces
+    the retry path of Q7, and a still-broken retry is rejected so the block keeps its source text
+    — an intact original URL beats a broken translated one.
+    <span class="path">(protected_text.py:67–77, 102–103; translate_pdf_direct.py:572–573)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What counts as a "contact-identity" block?</summary>
+    <p>A block that contains at least one protected token and whose remaining words look like a
+    name line rather than a sentence: 2–8 words which — after ignoring label words like
+    "contact", "email", "author", "website" — all start with a capital letter. That pattern
+    ("Jane Doe · jane.doe@example.eu") appears on virtually every poster and factsheet, and
+    translating the words around the email risks garbling the name itself, so the whole block is
+    preserved verbatim. <span class="path">(protected_text.py:86–100)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why exactly are references never translated?</summary>
+    <p>A citation is an identifier, not prose. Readers use it to <em>find</em> the cited work —
+    in search engines, DOIs, library catalogues — and those lookups only work on the original
+    title and venue string. A translated bibliography looks scholarly but points nowhere. This is
+    also why the reference-section detection of Q3 errs on the side of marking too much rather
+    than too little once the References heading is seen.</p>
+  </details>
+
+  <details class="support">
+    <summary>How do URLs keep their trailing punctuation?</summary>
+    <p>A URL at the end of a sentence — "see https://example.eu/x." — must not swallow the
+    period into the token, or restoration would produce a broken link. The protector peels
+    trailing punctuation (<code>. , ; : ! ? ) ] } " '</code>) off the matched URL and leaves it
+    <em>outside</em> the token, where the translator may treat it as normal text.
+    <span class="path">(protected_text.py:49–59)</span></p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q7: The suspicion / retry loop                               -->
+<!-- ============================================================ -->
+<section class="qa" id="q7">
+  <h2><span class="qmark">Q7</span>How does the service catch a <em>bad</em> translation before it lands on the page?</h2>
+
+  <p><strong>Short answer:</strong> every candidate translation — from any backend — passes
+  through <code>should_retry_translation</code>, a stack of cheap heuristics that asks: is it
+  empty? identical to the source? a degenerate repetition loop? mostly leaked source text? full
+  of English stopwords despite a non-English target? A suspicious candidate gets <strong>exactly
+  one retry</strong> with the stricter single-snippet prompt; if the retry is still suspicious,
+  the block is <strong>rejected and its source text is kept</strong>. The failure mode is always
+  "original text remains", never "confident garbage" and never "text disappears".
+  <span class="path">(translator_llm.py:63–102, translate_pdf_direct.py:554–598)</span></p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>What does a "degenerate" translation look like, and how is it caught?</summary>
+    <p>Low-resource targets — notably Irish and Maltese — can send a model into a loop
+    ("…ar bheith i bhunáid ar bheith i bhunáid…"). Three tests catch it: output longer than
+    max(2.4 × source, source + 120 chars) — legitimate EU-language expansion tops out around
+    1.5×, so this only fires on pathology; a unique-word ratio below 0.4 over ≥ 16 words; or any
+    four-word phrase repeated ≥ 3 times. <span class="path">(translator_llm.py:37–60)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>How is "the source text leaked into the output" detected?</summary>
+    <p>For sources ≥ 40 characters, a <code>SequenceMatcher</code> comparison: a single common
+    run ≥ max(28 chars, 45% of the source) or an overall similarity ratio &gt; 0.82 means the
+    model copied rather than translated. Additionally, for English → non-English with ≥ 10
+    output tokens, ≥ 6 English stopwords making up ≥ 22% of tokens flags untranslated English
+    riding along. <span class="path">(translator_llm.py:85–101)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why only one retry?</summary>
+    <p>Diminishing returns and honest failure. If the strict prompt at temperature 0 fails the
+    same checks twice, a third attempt rarely differs — while every retry costs an LLM round
+    trip per block. Rejecting keeps the source text (perfectly readable, just untranslated) and
+    the run's stats record it: <code>blocks_retried</code> and <code>blocks_rejected</code> come
+    back in <code>DirectTranslationStats</code> and are printed at the end of each run. Retries
+    only fire for blocks longer than 16 characters — for a two-word label, the checks are too
+    noisy to act on — except that a damaged protection token always forces the retry regardless
+    of length. <span class="path">(translate_pdf_direct.py:569–598)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Do the native (txt/docx/pptx) and HTML paths get the same protection?</summary>
+    <p>Yes — the identical <code>should_retry_translation</code> guard wraps every path:
+    per-segment in <code>translate_text_segments.py</code> (used by txt/docx/pptx), per-node in
+    the HTML engine, and per-OCR-block in image-text translation. Batch translations that fail
+    the check are individually retried with the strict prompt and individually rejected on a
+    second failure. <span class="path">(translate_text_segments.py:78–93, translator_llm.py:610–640,
+    translate_pdf_image_text.py:56–79)</span></p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q8: Layout fit and write-back                                -->
+<!-- ============================================================ -->
+<section class="qa" id="q8">
+  <h2><span class="qmark">Q8</span>Translations are longer than the original — how does the text still fit the page?</h2>
+
+  <p><strong>Short answer:</strong> every translated block goes through a side-effect-free
+  <em>placement planner</em> (<code>_plan_block_write</code>) that decides where and how the text
+  can be drawn before anything touches the page. The source rectangle is grown by kind-specific
+  amounts (paragraphs get generous height, captions barely any), clamped so it can never spill
+  into the block below, and optionally widened sideways into genuinely free space. The planner
+  then searches candidate boxes × line-heights (the kind's default, 1.0, 0.94) × font sizes
+  (shrinking ×0.92 per step, down to a 7 pt floor) until the text <em>genuinely</em> fits. No
+  fit at a readable size → the block is declared <strong>unplaced</strong> and its source text
+  is preserved. <span class="path">(translate_pdf_direct.py:260–449)</span></p>
+
+  <p>Writing is then done in <strong>two phases per page</strong>: all source-glyph redactions
+  are queued and applied first, and only afterwards is all translated text inserted. Finally,
+  link annotations captured before the rewrite are restored, and the PDF is saved compacted
+  (<code>garbage=3, deflate</code>). <span class="path">(translate_pdf_direct.py:600–698)</span></p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>Why must redaction be two-phase?</summary>
+    <p>Adjacent line boxes in real PDFs overlap by a few points. In a naive per-block
+    redact-then-write loop, block <em>N+1</em>'s redaction erases part of the text just written
+    for block <em>N</em> — silently blanking output. Planning everything first, then applying all
+    of a page's redactions in one pass, then inserting all text, makes that failure structurally
+    impossible. The single-block helper <code>_fit_and_write_block</code> still exists for tests,
+    with a docstring warning not to use it in batch. <span class="path">(translate_pdf_direct.py:237–246,
+    474–498, 607–614)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why does the planner require <code>spare ≥ 0</code> instead of "close enough"?</summary>
+    <p>Because PyMuPDF's <code>insert_textbox</code> renders <em>nothing at all</em> when the text
+    overflows even slightly — it returns a negative "spare" and draws no glyphs. A lenient
+    threshold would therefore "place" text that then silently vanishes at write time. The
+    planner measures each candidate on a scratch page and accepts only sizes that truly fit.
+    <span class="path">(translate_pdf_direct.py:203–234, 408–417)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What keeps a redaction from erasing text that must survive?</summary>
+    <p>A "preserved rects" registry per page: every skipped, rejected, or unplaced block, plus
+    the number- and symbol-only lines from Q3 that never became blocks. Each queued redaction is
+    trimmed away from those rectangles (with a small gap, when the overlap is significant). If
+    trimming would collapse the redaction entirely, the original rectangle is kept — a few stray
+    glyphs behind a translation are less harmful than erasing preserved source text, and a
+    translation drawn over un-redacted glyphs would be unreadable.
+    <span class="path">(translate_pdf_direct.py:102–128, 615–660)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>How are Greek, Polish, and other non-Latin-1 targets rendered?</summary>
+    <p>The PDF base-14 Helvetica fonts only cover Latin-1. <code>resolve_font_for_text</code>
+    checks whether the translated text needs more (any codepoint above U+00FF, or specific
+    symbols), and if so walks a candidate list of system Unicode fonts — Noto Sans (+ Greek,
+    Symbols, CJK), DejaVu Sans, Liberation Sans — verifying <em>per glyph</em> that the font
+    actually covers the text before embedding it. Curly quotes and a few exotic symbols are
+    sanitized to widely-covered equivalents first. Bold/italic hints from the source font name
+    map to the matching base font when no Unicode font is needed.
+    <span class="path">(app/pipeline/fonts.py:40–125)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why do hyperlinks need explicit restoring?</summary>
+    <p>Applying redactions destroys the link annotations that overlap them. So before any
+    rewriting, every page's links are captured (with their rectangles and targets); after all
+    text is written, they are re-inserted — deduplicated against whatever survived, keyed by
+    rounded rectangle + link kind + URI/page. A clickable DOI stays clickable in the translation.
+    <span class="path">(translate_pdf_direct.py:52–95, 693–694)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>When does a block end up "unplaced", and what does the user see?</summary>
+    <p>When even the largest candidate box at line-height 0.94 and 7 pt can't hold the
+    translation — typically a tiny label whose translation tripled in length, boxed in by
+    neighbours on all sides. The pipeline logs a warning with the block and page, counts it in
+    <code>blocks_unplaced</code>, and leaves the source text visible in place. To a reader that
+    looks like "this one label is still in English" — which is the intended, honest behaviour,
+    not a bug. Centered blocks are widened symmetrically so their translation stays visually
+    centered; rotated (vertical) text keeps its exact box and only shrinks.
+    <span class="path">(translate_pdf_direct.py:423–429)</span></p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q9: Native formats                                           -->
+<!-- ============================================================ -->
+<section class="qa" id="q9">
+  <h2><span class="qmark">Q9</span>How are .txt, .docx, and .pptx translated — and what happens to legacy .doc/.ppt?</h2>
+
+  <p><strong>Short answer:</strong> natively, inside their own container — a <code>.docx</code>
+  goes in and a <code>.docx</code> comes out, with styles, images, tables, and layout untouched.
+  All three formats share one engine-agnostic core, <code>translate_text_segments.py</code>:
+  collect text segments, detect the source language if needed, translate in batches of ≤ 40
+  with the Q7 retry guard, and write the results back. Legacy <code>.doc</code>/<code>.ppt</code>
+  files are first converted to their modern equivalents by headless LibreOffice
+  (<code>soffice --convert-to</code>), then take the normal lane — with a clear error if
+  LibreOffice isn't installed. <span class="path">(translate_text_segments.py:32–104,
+  convert_legacy_office.py:16–46)</span></p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>How does .txt keep its paragraph structure?</summary>
+    <p>The bytes are decoded by trying <code>utf-8 → utf-8-sig → cp1252 → latin-1</code> in
+    order. The text is then split on blank lines into segments, and the blank lines themselves
+    are <em>kept as segments</em> that pass through translation untouched — so rejoining the
+    translated list reproduces the original spacing exactly.
+    <span class="path">(translate_txt.py:8–53)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Which parts of a .docx are translated?</summary>
+    <p>The main body (<code>word/document.xml</code>), footnotes, endnotes, comments, and every
+    header/footer part. Within each paragraph, the text runs (<code>w:t</code> nodes) are joined
+    into one string so the translator sees whole sentences, not fragments split by formatting
+    boundaries. Everything else in the zip is copied through byte-for-byte.
+    <span class="path">(translate_docx.py:10–75)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>What is the "first-run write-back" trade-off?</summary>
+    <p>A source paragraph may be split across several runs with different formatting — say, one
+    bolded word mid-sentence. The translation of the <em>joined</em> paragraph can't be mapped
+    back onto those run boundaries (word order changes across languages), so the whole
+    translation is written into the <em>first</em> run and the rest are blanked. The paragraph
+    reads correctly and keeps the first run's style; what is lost is mid-paragraph formatting
+    variation. That's a deliberate trade: translation coherence over per-word styling.
+    <span class="path">(translate_docx.py:60–64, translate_pptx.py:53–57)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>And .pptx?</summary>
+    <p>Identical surgery over <code>ppt/slides/slide*.xml</code> and
+    <code>ppt/notesSlides/</code>: per <code>a:p</code> paragraph, join the <code>a:t</code>
+    runs, translate, first-run write-back. Slide layouts, masters, media, and animations are
+    untouched. Speaker notes are translated too.
+    <span class="path">(translate_pptx.py:10–68)</span></p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q10: HTML engine and image-embedded text                     -->
+<!-- ============================================================ -->
+<section class="qa" id="q10">
+  <h2><span class="qmark">Q10</span>What are the HTML engine and image-text translation — and why aren't they part of the public API?</h2>
+
+  <p><strong>Short answer:</strong> they are the <em>advanced/fallback</em> capabilities, reachable
+  only through the hidden <code>/translate/pdf/advanced</code> route or CLI flags. The
+  <strong>HTML engine</strong> is the older PDF path: Poppler <code>pdftohtml</code> converts the
+  page to position-preserving HTML, the text nodes are translated (or replaced from a JSON
+  mapping), and Playwright Chromium renders the HTML back to PDF at the original page size. The
+  <strong>image-text</strong> feature OCRs embedded figures with the vision LLM and overlays
+  translations onto the image regions. Both trade fidelity for capabilities the direct engine
+  doesn't have. <span class="path">(pdf_translate_service.py:105–197, translate_pdf_image_text.py)</span></p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>How does the HTML engine work, step by step?</summary>
+    <ol class="steps">
+      <li>The formula-policy gate runs here too, then Chromium's presence is ensured
+        (auto-install on first use). <span class="path">(playwright_support.py)</span></li>
+      <li>The first page's size is read so the output matches the source geometry.
+        <span class="path">(pdf_page_size.py)</span></li>
+      <li><code>pdftohtml -c -s -noframes</code> produces one complex-layout HTML file.
+        <span class="path">(convert_pdf_to_html.py:10–54)</span></li>
+      <li>BeautifulSoup walks every text node, preserving the exact whitespace around each one;
+        translatable nodes are batch-translated with the Q7 guard, or — in mapping mode — replaced
+        via exact string matching from the caller's JSON (<code>mapping_json</code> and
+        <code>target_lang</code> are mutually exclusive). <span class="path">(translator_llm.py:459–658,
+        replace_html_text.py)</span></li>
+      <li>Playwright Chromium renders the HTML to PDF; when text changed, overflow adjustment and
+        background-image hiding are switched on. <code>save_html=true</code> keeps the
+        intermediate HTML in the output bundle for debugging. <span class="path">(render_html_to_pdf.py)</span></li>
+    </ol>
+  </details>
+
+  <details class="support">
+    <summary>How does image-text translation work?</summary>
+    <p>For every embedded image at least 80×50 pt, a 2× crop is rendered and sent to the vision
+    model with a prompt that asks for <em>figure-embedded text only</em> — body paragraphs,
+    headers, and page numbers are explicitly excluded — returned as JSON blocks with bounding
+    boxes normalized to a 0–1000 grid. Up to 20 blocks per region are translated by the selected
+    backend (with the usual retry guard), then each block's rectangle is white-filled and the
+    translation drawn on top, shrinking the font up to six times (×0.92) to fit.
+    <span class="path">(translate_pdf_image_text.py:26–172, vision_llm.py:93–141)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why is image-text off by default?</summary>
+    <p>It's destructive and approximate: the white fill permanently covers part of the original
+    raster image, and vision-model bounding boxes are estimates — a slightly-off box paints over
+    neighbouring artwork. For most documents the figures' text is decorative or secondary; for
+    the public API the safe default is to leave images pristine
+    (<code>translate_image_text=False</code> is hard-coded on the public route). Enable it
+    per-run via the advanced route or <code>--translate-image-text</code> only when figure text
+    is essential. <span class="path">(routes/translate.py:127, document_translate_service.py:155)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>When would I choose the HTML engine over direct?</summary>
+    <p>Rarely — <code>direct</code> is the production path and preserves the original PDF's
+    internals (fonts, vector art, links). The HTML engine is the fallback for documents whose
+    text the direct extractor handles poorly, and the only path that supports
+    <strong>mapping mode</strong>: applying an exact find→replace dictionary instead of machine
+    translation, useful for controlled terminology substitution. Its cost is re-rendering the
+    whole document through a browser, which approximates rather than preserves the original
+    typography.</p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q11: Running, testing, operating                             -->
+<!-- ============================================================ -->
+<section class="qa" id="q11">
+  <h2><span class="qmark">Q11</span>How do I run, test, and operate the service?</h2>
+
+  <p><strong>Short answer:</strong> <code>bash run.sh</code> starts the API on port 15000
+  (uvicorn, <code>app.main:app</code>); the same pipelines are reachable without the API through
+  <code>cli.py</code>. Tests are three tiers: fast unit tests (<code>./run_tests.sh</code>,
+  stdlib <code>unittest</code> — not pytest), a curated regression suite over real fixtures
+  (<code>./run_regression_tests.sh</code>), and a long-running full matrix that translates every
+  file in <code>input/</code> into all 24 EU languages
+  (<code>./run_all_eu_translations.sh</code>). Docker/compose files exist for deployment.</p>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>What are the essential CLI invocations?</summary>
+    <div class="flow"># Direct engine (production path), adaptive backend
+python cli.py --pdf-in input/doc.pdf --workdir ./work \
+  --target-lang es --layout-engine direct --engine adaptive --pdf-out output/
+
+# Office / text documents
+python cli.py --document-in input/doc.docx --workdir ./work \
+  --target-lang es --pdf-out output/
+
+# HTML engine with a JSON replacement mapping (no translation)
+python cli.py --pdf-in input/doc.pdf --workdir ./work \
+  --mapping-json replacements.json --layout-engine html --pdf-out output/</div>
+    <p>When <code>--pdf-out</code> is a directory, outputs are auto-named
+    <code>&lt;stem&gt;_&lt;target_lang&gt;&lt;ext&gt;</code> (mapping mode:
+    <code>&lt;stem&gt;_mapped.pdf</code>). <code>--source-lang</code> is optional;
+    <code>--translate-image-text</code> and <code>--save-html</code> are the advanced toggles.</p>
+  </details>
+
+  <details class="support">
+    <summary>What are the test-suite gotchas?</summary>
+    <p>Three, all documented in <code>TESTING.md</code>/<code>CLAUDE.md</code>: the scripts use
+    <code>unittest discover</code>, not pytest; they hard-code <code>.venv/bin/python</code>
+    (override with <code>PYTHON_BIN</code>); and a few tests' validation expectations depend on
+    the engine env — always pin <code>TRANSLATION_ENGINE=llm</code> when running them.
+    Single module: <code>TRANSLATION_ENGINE=llm .venv/bin/python -m unittest
+    tests.test_api_schema</code>.</p>
+  </details>
+
+  <details class="support">
+    <summary>What does the bulk EU-matrix runner produce?</summary>
+    <p><code>run_all_eu_translations.sh</code> translates every supported file in
+    <code>input/</code> into all 24 languages, writing to
+    <code>output/eu_translations/&lt;lang&gt;/</code>, with per-job logs in <code>_logs/</code>
+    and a machine-readable <code>manifest.json</code> recording engine, timestamps, and per-job
+    duration. When a target equals the detected source, the original is copied as that
+    language's artifact so every input ends with a complete 24-language set. Overrides:
+    <code>ENGINE=</code>, <code>SOURCE_LANG=</code> (dangerous — see Q4),
+    <code>OVERWRITE=1</code>, <code>INPUT_DIR=</code>/<code>OUTPUT_DIR=</code>. It runs the same
+    CLI pipeline as production — it's an integration utility, not a unit test.</p>
+  </details>
+
+  <details class="support">
+    <summary>Which environment variables matter?</summary>
+    <p>Canonical names (see <code>.env.sample</code>): <code>TEXT_MODEL_URL/_API_KEY/_NAME</code>,
+    <code>VISION_MODEL_URL/_API_KEY/_NAME</code>, <code>DEFAULT_NUM_PREDICT</code>,
+    <code>COMBINE_NUM_PREDICT</code>, <code>PER_REQUEST_TIMEOUT</code>,
+    <code>BASIC_AUTH_USERNAME/PASSWORD</code>, <code>TRANSLATION_ENGINE</code>,
+    <code>DEEPL_API_KEY</code>, <code>DEEPL_SERVER_URL</code>,
+    <code>DEEPL_EN_VARIANT</code>/<code>DEEPL_PT_VARIANT</code>. Legacy fallback names
+    (<code>TEXT_URL</code>, <code>VLLM_MODEL</code>, <code>RUNPOD_VLLM_HOST</code>,
+    <code>DEEPL_AUTH_KEY</code>, …) are still honoured and must keep working.
+    <span class="path">(app/core/model_config.py)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Why does the README title say "Doc Generator"?</summary>
+    <p>History. The project began as "Doc Generator" and was later deployed as
+    <strong>OmniLingua</strong> (the FastAPI app title says so). The old name still appears in
+    a few places — the README heading and the HTML-path temp-dir prefix
+    (<code>doc_generator_api_</code>) — and is harmless. The service is OmniLingua.</p>
+  </details>
+
+  <details class="support">
+    <summary>What system dependencies does a deployment need?</summary>
+    <p>Python 3.10+; <code>poppler-utils</code> (<code>pdftohtml</code>, <code>pdftotext</code>,
+    <code>pdfinfo</code>) for the HTML engine; Playwright Chromium (auto-installed on first HTML
+    render, or <code>playwright install chromium</code> up front); Unicode fonts with broad
+    coverage (Noto/DejaVu) for non-Latin targets in the direct engine; and LibreOffice
+    (<code>soffice</code>) only if legacy <code>.doc</code>/<code>.ppt</code> support is wanted.
+    The <code>Dockerfile</code> bakes these in. <code>work/</code> and <code>output/</code> are
+    generated artifacts — never commit them.</p>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<!-- Q12: Failure modes                                           -->
+<!-- ============================================================ -->
+<section class="qa" id="q12">
+  <h2><span class="qmark">Q12</span>What can go wrong — and what does the caller actually see?</h2>
+
+  <p><strong>Short answer:</strong> the service fails <em>loudly before</em> translating and
+  <em>gracefully during</em>. Everything checkable up front — auth, file type, languages, engine,
+  content policy — is a clear 401/400 before a single model call. Once a run is underway, an
+  individual block or segment failing means its source text is kept and counted, never dropped;
+  only whole-run problems (LLM unreachable, LibreOffice missing, detected source equals target)
+  surface as a 500 wrapped in "Translation pipeline failed: …".</p>
+
+  <div class="tip"><strong>Rule of thumb when triaging:</strong> untranslated <em>fragments</em>
+  in an otherwise translated document are working-as-designed guard rails (references, contact
+  blocks, rejected or unplaced blocks — see Q6–Q8); an untranslated <em>document</em> means a
+  4xx/5xx you can find in the logs.</div>
+
+  <h3>Supporting questions</h3>
+
+  <details class="support">
+    <summary>Full list of client-visible errors?</summary>
+    <ol class="steps">
+      <li><strong>401</strong> — bad/missing basic auth, on any route including <code>/docs</code>.</li>
+      <li><strong>400</strong> — unsupported extension; missing or non-EU <code>target_lang</code>;
+        <code>source_lang == target_lang</code> (both supplied); invalid <code>engine</code>;
+        <code>deepl</code> engine with an <code>mt</code>/<code>ga</code> target; formula-heavy
+        PDF; on the advanced route also: non-PDF upload, <code>mapping_json</code> together with
+        <code>target_lang</code>, or invalid mapping JSON.</li>
+      <li><strong>500</strong> — any pipeline exception, wrapped with its message: LLM API
+        unreachable (the one mid-run hard stop), detected source equals target, no translatable
+        text found in the PDF, LibreOffice missing for legacy files, DeepL service errors in
+        <code>deepl</code> mode (in <code>adaptive</code> mode these fall back instead).</li>
+    </ol>
+    <p><span class="path">(document_translate_service.py:187–192, pdf_translate_service.py:199–204)</span></p>
+  </details>
+
+  <details class="support">
+    <summary>Which failures are deliberately <em>not</em> errors?</summary>
+    <p>Per-block rejections and unplaced blocks (source kept, counted in stats); DeepL dying
+    mid-run under <code>adaptive</code> (sticky fallback to the LLM); a same-language document
+    in the HTML engine (returned unchanged); and a same-language target in the bulk runner
+    (original copied as the artifact). All are visible in logs/stats, none abort the run.</p>
+  </details>
+
+  <details class="support">
+    <summary>Where do I see what a run actually did?</summary>
+    <p>The direct pipeline returns and prints <code>DirectTranslationStats</code>: total blocks,
+    translated, skipped, retried, rejected, truncated/unplaced, API calls, detected source
+    language, and — when image-text ran — regions processed and image blocks
+    translated/rejected. The native paths return the analogous
+    <code>SegmentTranslationStats</code>. The bulk runner persists per-job timing and outcomes in
+    its <code>manifest.json</code>. <span class="path">(translate_pdf_direct.py:31–49, 700–722)</span></p>
+  </details>
+</section>
+
+<!-- Add new Q&A sections above this line, following the same structure:
+     <section class="qa" id="qN"> … main answer … <details class="support"> … -->
+
+</div>
+</body>
+</html>
