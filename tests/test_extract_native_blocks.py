@@ -4,6 +4,7 @@ import unittest
 
 from app.pipeline.block_schema import ExtractedTextBlock, TextStyleHint
 from app.pipeline.extract_native_blocks import (
+    _block_logical_lines,
     _can_merge_lines,
     _classify_scholarly_kind,
     _detect_line_alignment,
@@ -274,6 +275,93 @@ class ExtractNativeBlocksTests(unittest.TestCase):
         second = _block(2, 40, 116.0, 260, 134.0, "2027 programme results.")
         merged = _merge_hyphen_continuations([first, second], page_width=550.0)
         self.assertEqual(len(merged), 2)
+
+
+def _raw_line(x0: float, y0: float, x1: float, y1: float, text: str, size: float = 10.9) -> dict:
+    return {
+        "bbox": (x0, y0, x1, y1),
+        "dir": (1.0, 0.0),
+        "spans": [{"text": text, "size": size, "font": "OpenSans", "color": 0}],
+    }
+
+
+class RowStitchingTests(unittest.TestCase):
+    """Justified text splits one visual row into per-word PyMuPDF "lines";
+    geometry below is taken from a real factsheet exhibiting the failure."""
+
+    def test_stitches_justified_row_fragments_into_one_line(self) -> None:
+        raw_block = {
+            "type": 0,
+            "lines": [
+                _raw_line(278.1, 405.8, 515.6, 416.7, "Gli allevamenti di polli da carne hanno bisogno di"),
+                _raw_line(278.1, 416.3, 321.0, 427.2, "elettricità"),
+                _raw_line(329.9, 416.3, 345.0, 427.2, "per"),
+                _raw_line(352.4, 416.3, 400.5, 427.2, "alimentare"),
+                _raw_line(409.5, 416.3, 417.1, 427.2, "le"),
+                _raw_line(425.3, 416.3, 498.1, 427.2, "apparecchiature"),
+                _raw_line(507.1, 416.3, 515.6, 427.2, "di"),
+                _raw_line(278.1, 427.6, 514.7, 438.5, "ventilazione, l'illuminazione, il riscaldamento e altre"),
+            ],
+        }
+        lines = _block_logical_lines(raw_block)
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[1]["text"], "elettricità per alimentare le apparecchiature di")
+        self.assertEqual(lines[1]["bbox"], (278.1, 416.3, 515.6, 427.2))
+
+    def test_stitching_absorbs_numeric_fragments_into_the_sentence(self) -> None:
+        raw_block = {
+            "type": 0,
+            "lines": [
+                _raw_line(278.1, 100.0, 350.0, 110.9, "rispettivamente"),
+                _raw_line(361.4, 100.0, 370.0, 110.9, "di"),
+                _raw_line(381.1, 100.0, 425.0, 110.9, "176.000€"),
+                _raw_line(436.9, 100.0, 442.3, 110.9, "e"),
+            ],
+        }
+        lines = _block_logical_lines(raw_block)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["text"], "rispettivamente di 176.000€ e")
+
+    def test_stacked_lines_are_not_stitched(self) -> None:
+        raw_block = {
+            "type": 0,
+            "lines": [
+                _raw_line(278.1, 405.8, 515.6, 416.7, "prima riga completa del testo"),
+                _raw_line(278.1, 416.3, 514.7, 427.2, "seconda riga completa del testo"),
+            ],
+        }
+        self.assertEqual(len(_block_logical_lines(raw_block)), 2)
+
+    def test_wide_gaps_leave_the_row_unstitched(self) -> None:
+        # 3 em at 10.9pt is ~32.7pt; this gap is ~60pt — table-column territory.
+        raw_block = {
+            "type": 0,
+            "lines": [
+                _raw_line(40.0, 100.0, 120.0, 110.9, "left cell"),
+                _raw_line(180.0, 100.0, 260.0, 110.9, "right cell"),
+            ],
+        }
+        self.assertEqual(len(_block_logical_lines(raw_block)), 2)
+
+    def test_mismatched_font_sizes_leave_the_row_unstitched(self) -> None:
+        raw_block = {
+            "type": 0,
+            "lines": [
+                _raw_line(40.0, 95.0, 70.0, 125.0, "Q", size=30.0),
+                _raw_line(74.0, 100.0, 260.0, 110.9, "uesta storia inizia"),
+            ],
+        }
+        self.assertEqual(len(_block_logical_lines(raw_block)), 2)
+
+    def test_overlapping_fragments_leave_the_row_unstitched(self) -> None:
+        raw_block = {
+            "type": 0,
+            "lines": [
+                _raw_line(40.0, 100.0, 120.0, 110.9, "watermark"),
+                _raw_line(80.0, 100.0, 200.0, 110.9, "body text over it"),
+            ],
+        }
+        self.assertEqual(len(_block_logical_lines(raw_block)), 2)
 
 
 if __name__ == "__main__":

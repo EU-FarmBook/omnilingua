@@ -18,7 +18,6 @@ This project supports:
 
 ## Documentation
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — module layout, high-level flows, API contract
 - [TESTING.md](./TESTING.md) — test levels and commands
 - [docs/flow-technical.html](./docs/flow-technical.html) — visual end-to-end pipeline walkthrough (open in a browser)
 - [docs/omnilingua_qna.html](./docs/omnilingua_qna.html) — internal Q&A / FAQ about how the service works
@@ -376,7 +375,7 @@ omnilingua/
 ├── run_all_eu_translations.sh
 ├── requirements.txt
 ├── Dockerfile / docker-compose.yml
-├── ARCHITECTURE.md / TESTING.md
+├── TESTING.md
 ├── .env.sample
 └── README.md
 ```

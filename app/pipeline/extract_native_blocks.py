@@ -84,6 +84,124 @@ def _line_rotation(direction: object) -> int:
     return 0
 
 
+# Same-row stitching: two fragments belong to one visual row when their boxes
+# overlap vertically by at least this fraction of the smaller height. Stacked
+# lines with tight leading overlap far less (~40% at worst), so 0.6 separates
+# the two cases cleanly.
+_ROW_OVERLAP_MIN_RATIO = 0.6
+# Widest inter-word gap that still reads as one justified line. Measured
+# justified gaps in real factsheets reach ~2.4 em; genuine table-column gaps
+# sit well above 3 em.
+_ROW_JOIN_MAX_GAP_EMS = 3.0
+
+
+def _line_fragment(raw_line: dict) -> dict | None:
+    """Normalize a raw PyMuPDF line into a fragment record, or None if unusable."""
+    spans = raw_line.get("spans", [])
+    if not spans:
+        return None
+    bbox_raw = raw_line.get("bbox")
+    if not bbox_raw or len(bbox_raw) != 4:
+        return None
+    return {
+        "bbox": tuple(float(v) for v in bbox_raw),
+        "text": "".join(str(span.get("text", "")) for span in spans).strip(),
+        "spans": list(spans),
+        "rotation": _line_rotation(raw_line.get("dir", (1.0, 0.0))),
+    }
+
+
+def _vertical_overlap_ratio(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+) -> float:
+    overlap = min(a[3], b[3]) - max(a[1], b[1])
+    height_a = a[3] - a[1]
+    height_b = b[3] - b[1]
+    if overlap <= 0 or height_a <= 0 or height_b <= 0:
+        return 0.0
+    return overlap / min(height_a, height_b)
+
+
+def _fragment_font_size(fragment: dict) -> float:
+    sizes = [float(span.get("size", 0) or 0) for span in fragment["spans"]]
+    return max(sizes) if sizes and max(sizes) > 0 else 11.0
+
+
+def _stitch_row(fragments: List[dict]) -> List[dict]:
+    """Stitch one visual row of fragments back into a single logical line.
+
+    Returns the fragments unchanged when the row does not look like one
+    justified line: overlapping fragments (stacked decorations), gaps beyond
+    ``_ROW_JOIN_MAX_GAP_EMS`` (table columns), or strongly mismatched font
+    sizes (drop caps) all leave the row untouched.
+    """
+    if len(fragments) < 2:
+        return fragments
+    ordered = sorted(fragments, key=lambda fragment: fragment["bbox"][0])
+    for left, right in zip(ordered, ordered[1:]):
+        gap = right["bbox"][0] - left["bbox"][2]
+        left_size = _fragment_font_size(left)
+        right_size = _fragment_font_size(right)
+        if gap < -1.0:
+            return fragments
+        if gap > _ROW_JOIN_MAX_GAP_EMS * max(left_size, right_size, 1.0):
+            return fragments
+        if abs(left_size - right_size) > 0.25 * max(left_size, right_size):
+            return fragments
+
+    bbox = ordered[0]["bbox"]
+    spans: List[dict] = []
+    for fragment in ordered:
+        bbox = _merge_bbox(bbox, fragment["bbox"])
+        spans.extend(fragment["spans"])
+    return [
+        {
+            "bbox": bbox,
+            "text": " ".join(fragment["text"] for fragment in ordered if fragment["text"]),
+            "spans": spans,
+            "rotation": 0,
+        }
+    ]
+
+
+def _block_logical_lines(raw_block: dict) -> List[dict]:
+    """Return a raw block's lines with same-row word fragments stitched together.
+
+    Fully justified text stretches inter-word gaps; past PyMuPDF's internal
+    line-joining threshold every word of such a line arrives as a separate
+    "line" sharing one visual row. Left alone, each word becomes its own
+    block and is translated in isolation — producing word-for-word output
+    with function words stranded in the source language. Fragments sharing a
+    row inside one raw block are stitched back into a single logical line
+    (x-ordered, space-joined). Digit-only fragments (figures, prices) are
+    stitched too, so the sentence keeps its numbers; whether the resulting
+    line is translatable is decided afterwards, on the joined text.
+    """
+    stitched: List[dict] = []
+    horizontal: List[dict] = []
+    for raw_line in raw_block.get("lines", []):
+        fragment = _line_fragment(raw_line)
+        if fragment is None or not fragment["text"]:
+            continue
+        if fragment["rotation"] != 0:
+            stitched.append(fragment)
+            continue
+        horizontal.append(fragment)
+
+    rows: List[List[dict]] = []
+    for fragment in horizontal:
+        for row in rows:
+            if _vertical_overlap_ratio(row[0]["bbox"], fragment["bbox"]) >= _ROW_OVERLAP_MIN_RATIO:
+                row.append(fragment)
+                break
+        else:
+            rows.append([fragment])
+    for row in rows:
+        stitched.extend(_stitch_row(row))
+    return stitched
+
+
 def _can_merge_lines(
     previous: ExtractedTextBlock,
     current: ExtractedTextBlock,
@@ -633,20 +751,12 @@ def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
                 if raw_block.get("type", 0) != 0:
                     continue
 
-                for raw_line in raw_block.get("lines", []):
-                    spans = raw_line.get("spans", [])
-                    if not spans:
-                        continue
-
-                    text = "".join(str(span.get("text", "")) for span in spans).strip()
+                for line in _block_logical_lines(raw_block):
+                    text = line["text"]
                     if not is_translatable_native_text(text):
                         continue
 
-                    bbox_raw = raw_line.get("bbox")
-                    if not bbox_raw or len(bbox_raw) != 4:
-                        continue
-
-                    style_span = _style_span_for_line(spans)
+                    style_span = _style_span_for_line(line["spans"])
                     font_name = str(style_span.get("font", "helv"))
                     font_size = float(style_span.get("size", 11.0))
                     color_rgb = _int_color_to_rgb(int(style_span.get("color", 0)))
@@ -655,7 +765,7 @@ def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
                         ExtractedTextBlock(
                             block_id=line_id,
                             page_index=page_index,
-                            bbox=tuple(float(v) for v in bbox_raw),
+                            bbox=line["bbox"],
                             text=text,
                             source="native",
                             kind="line",
@@ -667,7 +777,7 @@ def extract_native_text_blocks(pdf_path: Path) -> List[ExtractedTextBlock]:
                             ),
                             raw_block_id=raw_block_index,
                             line_count=1,
-                            rotation=_line_rotation(raw_line.get("dir", (1.0, 0.0))),
+                            rotation=line["rotation"],
                         )
                     )
                     line_id += 1
@@ -716,17 +826,14 @@ def collect_untranslatable_line_rects(pdf_path: Path) -> dict[int, List[tuple[fl
             for raw_block in page.get_text("dict").get("blocks", []):
                 if raw_block.get("type", 0) != 0:
                     continue
-                for raw_line in raw_block.get("lines", []):
-                    spans = raw_line.get("spans", [])
-                    if not spans:
+                # Uses the same row-stitched view as extract_native_text_blocks:
+                # a digit-only fragment absorbed into a translated line must NOT
+                # be preserved separately, or its source glyphs would survive
+                # underneath the re-rendered translation.
+                for line in _block_logical_lines(raw_block):
+                    if is_translatable_native_text(line["text"]):
                         continue
-                    text = "".join(str(span.get("text", "")) for span in spans).strip()
-                    if not text or is_translatable_native_text(text):
-                        continue
-                    bbox_raw = raw_line.get("bbox")
-                    if not bbox_raw or len(bbox_raw) != 4:
-                        continue
-                    rects.setdefault(page_index, []).append(tuple(float(v) for v in bbox_raw))
+                    rects.setdefault(page_index, []).append(line["bbox"])
     finally:
         doc.close()
     return rects
