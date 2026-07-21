@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from app.core.engines import is_deepl_supported, validate_engine
@@ -30,6 +32,24 @@ def normalize_optional_text(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped if stripped else None
+
+
+def write_stats_json(path: str | None, stats, *, kind: str) -> None:
+    """Write a machine-readable stats sidecar so batch runs can build a manifest.
+
+    Best-effort: a failure here must never fail an otherwise-successful
+    translation, so the write is guarded.
+    """
+    if not path or stats is None:
+        return
+    try:
+        payload = asdict(stats) if is_dataclass(stats) else dict(vars(stats))
+        payload["stats_kind"] = kind
+        out = Path(path).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        print(f"Warning: could not write stats JSON to {path}: {exc}", file=sys.stderr)
 
 
 def resolve_output_path(
@@ -97,6 +117,12 @@ def main() -> int:
         help="Experimental: translate text embedded inside images when using the direct engine.",
     )
     ap.add_argument(
+        "--stats-json",
+        required=False,
+        default=None,
+        help="Optional path to write machine-readable translation stats as JSON (for batch manifests / QA).",
+    )
+    ap.add_argument(
         "--layout-engine",
         choices=("html", "direct"),
         default="direct",
@@ -122,6 +148,7 @@ def main() -> int:
     args.target_lang = normalize_optional_text(args.target_lang)
     args.source_lang = normalize_optional_text(args.source_lang)
     args.mapping_json = normalize_optional_text(args.mapping_json)
+    args.stats_json = normalize_optional_text(args.stats_json)
 
     try:
         args.target_lang = validate_optional_language_code(args.target_lang, "target_lang")
@@ -207,6 +234,7 @@ def main() -> int:
         )
         print(f"API calls made:  {stats.api_calls}")
         print(f"Output:          {out_path}")
+        write_stats_json(args.stats_json, stats, kind=actual_suffix.lstrip("."))
         return 0
 
     if args.layout_engine == "direct":
@@ -243,6 +271,7 @@ def main() -> int:
                 f"API calls: {stats.image_api_calls})"
             )
         print(f"PDF output:      {out_path}")
+        write_stats_json(args.stats_json, stats, kind="pdf_direct")
         return 0
 
     ensure_chromium_installed()
@@ -328,6 +357,7 @@ def main() -> int:
         print("No translation applied.")
     print(f"PDF output:      {out_path}")
 
+    write_stats_json(args.stats_json, stats, kind="pdf_html")
     return 0
 
 if __name__ == "__main__":

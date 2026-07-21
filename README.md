@@ -263,10 +263,15 @@ To translate every supported file in `input/` into all 24 EU languages, run:
 ```
 
 Outputs are written under `output/eu_translations/<lang>/`, with per-job logs in
-`output/eu_translations/_logs/` and a machine-readable manifest at
-`output/eu_translations/manifest.json`. The runner prints the resolved engine,
-start/finish timestamps, and per-translation duration; the manifest stores the
-same timing fields. By default the script auto-detects each file's source
+`output/eu_translations/_logs/` (including a `*.stats.json` sidecar per job) and a
+machine-readable manifest at `output/eu_translations/manifest.json`. The runner
+prints the resolved engine, start/finish timestamps, and per-translation
+duration; the manifest stores the same timing fields **plus each job's translation
+`stats` and derived `quality_flags`**. A job that finished but still shows
+`residual_source_text` (translatable text left in the source language),
+`unplaced_blocks`, or rejected text/image segments is counted under `flagged` in
+the summary and carries those flags in the manifest — a QA signal to review
+without eyeballing every output. By default the script auto-detects each file's source
 language; when a target language matches the detected source, the original file
 is copied as that language's artifact so each input still has a 24-language
 output set. Set `SOURCE_LANG` explicitly only when the whole input set is known
@@ -279,6 +284,7 @@ Useful overrides:
 ENGINE=adaptive ./run_all_eu_translations.sh
 SOURCE_LANG=en ./run_all_eu_translations.sh
 OVERWRITE=1 ./run_all_eu_translations.sh
+TRANSLATE_IMAGE_TEXT=1 ./run_all_eu_translations.sh   # also OCR+translate text inside figures/diagrams/images
 INPUT_DIR=/path/to/input OUTPUT_DIR=/path/to/output ./run_all_eu_translations.sh
 ```
 

@@ -243,6 +243,30 @@ class ExtractNativeBlocksTests(unittest.TestCase):
         self.assertEqual(_detect_line_alignment(left_aligned), "left")
         self.assertEqual(_detect_line_alignment([(40.0, 100.0, 220.0, 112.0)]), "left")
 
+    def test_detects_right_aligned_lines(self) -> None:
+        # Common right edge, ragged left edges across every line: a right-aligned
+        # block such as an author credit / top-right tag.
+        right_aligned = [
+            (120.0, 100.0, 300.0, 112.0),
+            (60.0, 114.0, 300.5, 126.0),
+            (95.0, 128.0, 299.5, 140.0),
+        ]
+        self.assertEqual(_detect_line_alignment(right_aligned), "right")
+
+    def test_hanging_indent_bullet_not_seen_as_right(self) -> None:
+        # A justified bullet with a hanging indent also lines its right edges up,
+        # but its left edges are clustered (only the marker line is the outlier).
+        # It must stay "left" so the translation is not pushed to the right.
+        bullet_lines = [
+            (40.0, 100.0, 300.0, 112.0),   # "• marker" line starts further left
+            (58.0, 114.0, 300.0, 126.0),   # continuation lines share one indent
+            (58.0, 128.0, 300.0, 140.0),
+        ]
+        self.assertEqual(
+            _detect_line_alignment(bullet_lines, "• Il miglioramento dell'isolamento"),
+            "left",
+        )
+
     def test_merges_hyphen_split_across_block_boundary(self) -> None:
         # A bold lead-in or raw-block split leaves "bioecono-" / "my. …" in
         # separate blocks; the post-pass must reunite the word.

@@ -43,6 +43,11 @@ class DirectTranslationStats:
     # the source text is preserved and the block is counted as unplaced.
     blocks_truncated: int = 0
     blocks_unplaced: int = 0
+    # QA signal: translatable body blocks (excluding contact/citation/number-only
+    # lines that are preserved on purpose) that were left in the SOURCE language
+    # on the finished page — the "a sentence remains in the original language"
+    # class of defect. Zero is the goal; any non-zero value should flag the job.
+    blocks_residual_source: int = 0
     # Backward-compatible field; new code should not drop content after redaction.
     blocks_dropped: int = 0
     image_regions_processed: int = 0
@@ -345,7 +350,9 @@ def _plan_block_write(
     if not text:
         return "skipped", None
 
-    is_centered = getattr(block, "alignment", "left") == "center"
+    alignment = getattr(block, "alignment", "left")
+    is_centered = alignment == "center"
+    is_right = alignment == "right"
     rotation = getattr(block, "rotation", 0)
     display_block = _is_display_block(block)
     if rotation:
@@ -384,6 +391,12 @@ def _plan_block_write(
         min_x0 = max(page.rect.x0 + 2.0, rect.x0 - half_extra)
         max_x1 = min(page.rect.x1 - 2.0, rect.x1 + half_extra)
         rect = fitz.Rect(min_x0, rect.y0, max_x1, rect.y0 + min_h)
+    elif is_right and extra_width > 0.0:
+        # Grow leftward only, keeping the source's right edge fixed so the
+        # right-aligned text (e.g. author credits, top-right tags) stays anchored
+        # on the right instead of drifting to the left margin.
+        min_x0 = max(page.rect.x0 + 2.0, rect.x0 - extra_width)
+        rect = fitz.Rect(min_x0, rect.y0, rect.x1, rect.y0 + min_h)
     else:
         max_x1 = min(page.rect.x1 - 2.0, rect.x1 + extra_width)
         rect = fitz.Rect(rect.x0, rect.y0, max_x1, rect.y0 + min_h)
@@ -413,13 +426,20 @@ def _plan_block_write(
             if horizontal_overlap <= min(source_rect.width, obstacle.width) * 0.30:
                 continue  # different column / no real collision
             vertical_limit = min(vertical_limit, obstacle.y0 - 1.0)
-        # Prefer never overlapping the block below; keep at least ~one line so a
-        # degenerate slot falls through to the fit search (which may shrink or
-        # leave the block unplaced) rather than producing a zero-height box.
-        rect.y1 = max(source_rect.y0 + 10.0, min(rect.y1, vertical_limit))
+        # Give the block all the vertical room down to the next block below (but
+        # never past it), so a translation longer than the source can spill into
+        # the free whitespace beneath it before the font-shrink search has to
+        # make the text smaller. insert_textbox top-anchors its text, so unused
+        # height below the copy is harmless, and capping at the next obstacle
+        # guarantees the box never overlaps the block below. This both grows
+        # tight boxes (fixing "translation UNPLACED, source kept", where the
+        # untranslated source was left on the page) and still shrinks a box whose
+        # neighbour sits close. The 10pt floor keeps a degenerate slot non-zero.
+        rect.y1 = max(source_rect.y0 + 10.0, vertical_limit)
 
-    if rotation:
-        # Sideways-expansion candidates assume horizontal text flow.
+    if rotation or is_right:
+        # Sideways-expansion candidates assume left-anchored horizontal flow;
+        # they would push a right-aligned block's right edge off its anchor.
         candidate_rects = [rect]
     else:
         candidate_rects = _candidate_layout_rects(
@@ -431,7 +451,12 @@ def _plan_block_write(
         )
 
     fontname, fontfile, render_text = resolve_font_for_text(page, block.style, text)
-    align = fitz.TEXT_ALIGN_CENTER if is_centered else fitz.TEXT_ALIGN_LEFT
+    if is_centered:
+        align = fitz.TEXT_ALIGN_CENTER
+    elif is_right:
+        align = fitz.TEXT_ALIGN_RIGHT
+    else:
+        align = fitz.TEXT_ALIGN_LEFT
     if display_block:
         size = max(8.0, block.style.font_size)
         line_height = 1.05 if block.kind == "title" else 1.08
@@ -445,7 +470,10 @@ def _plan_block_write(
         size = max(6.5, min(block.style.font_size, 28.0))
         line_height = 1.12
 
-    minimum_size = min(size, 7.0)
+    # Last-resort floor. 6.5pt is still legible and only reached when even the
+    # whitespace-expanded box above cannot hold the translation at 7pt — better a
+    # slightly small translated line than the source text left untranslated.
+    minimum_size = min(size, 6.5)
     placed_size: float | None = None
     placed_line_height = line_height
     placed_rect = rect
@@ -670,6 +698,7 @@ def translate_pdf_direct(
         translated_count = 0
         truncated_count = 0
         unplaced_count = 0
+        placed_block_ids: set[int] = set()
         # Phase 1: plan every block's placement without touching the page.
         # Text is inserted only in phase 2, after all redactions for a page have
         # been applied — otherwise a later block's redaction would erase text
@@ -703,6 +732,7 @@ def translate_pdf_direct(
             )
             if status == "fit" and plan is not None:
                 translated_count += 1
+                placed_block_ids.add(block.block_id)
                 plans_by_page.setdefault(block.page_index, []).append(plan)
             else:
                 preserved_rects_by_page.setdefault(block.page_index, []).append(
@@ -774,6 +804,34 @@ def translate_pdf_direct(
             f"⚠️  Layout fit: {truncated_count} block(s) truncated, "
             f"{unplaced_count} block(s) unplaced with source preserved."
         )
+
+    # QA: translatable body blocks that never got a translation drawn are still
+    # showing their source text on the finished page. Contact/citation blocks and
+    # number/symbol-only lines are preserved deliberately, so exclude them — what
+    # is left is the "remains in the original language" defect, surfaced as a
+    # first-class count (and a few samples) so a batch run can flag the job.
+    residual_samples: list[str] = []
+    for block in blocks:
+        if block.block_id in placed_block_ids:
+            continue
+        protected_source = protected_sources[block.block_id]
+        if not has_unprotected_translatable_text(protected_source.text):
+            continue
+        if is_contact_identity_text(protected_source.text):
+            continue
+        if block.kind == "reference":
+            continue
+        snippet = " ".join(block.text.split())
+        residual_samples.append(snippet[:80] + ("…" if len(snippet) > 80 else ""))
+    residual_count = len(residual_samples)
+    if residual_count:
+        print(
+            f"⚠️  Residual source language: {residual_count} translatable block(s) "
+            f"left untranslated on the page. Samples:"
+        )
+        for sample in residual_samples[:5]:
+            print(f"      • {sample!r}")
+
     total = len(blocks)
     return DirectTranslationStats(
         blocks_total=total,
@@ -785,6 +843,7 @@ def translate_pdf_direct(
         source_lang=source_lang,
         blocks_truncated=truncated_count,
         blocks_unplaced=unplaced_count,
+        blocks_residual_source=residual_count,
         blocks_dropped=0,
         image_regions_processed=image_stats.image_regions_processed if image_stats else 0,
         image_blocks_translated=image_stats.image_blocks_translated if image_stats else 0,

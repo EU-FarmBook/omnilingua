@@ -36,6 +36,10 @@ if [[ "${OVERWRITE:-0}" == "1" ]]; then
   cmd+=(--overwrite)
 fi
 
+if [[ "${TRANSLATE_IMAGE_TEXT:-0}" == "1" ]]; then
+  cmd+=(--translate-image-text)
+fi
+
 if [[ "${AUTO_SOURCE:-0}" == "1" ]]; then
   cmd+=(--auto-source)
 fi

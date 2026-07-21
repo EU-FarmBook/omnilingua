@@ -21,7 +21,7 @@ BlockKind = Literal[
     "image_text",
     "unknown",
 ]
-TextAlignment = Literal["left", "center"]
+TextAlignment = Literal["left", "center", "right"]
 
 
 @dataclass(frozen=True)

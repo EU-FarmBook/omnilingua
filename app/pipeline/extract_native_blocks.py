@@ -570,21 +570,46 @@ def _sort_page_lines(
     return ordered
 
 
-def _detect_line_alignment(line_bboxes: List[tuple[float, float, float, float]]) -> str:
-    """Infer whether a block's source lines were centered.
+def _detect_line_alignment(
+    line_bboxes: List[tuple[float, float, float, float]],
+    text: str = "",
+) -> str:
+    """Infer whether a block's source lines were centered or right-aligned.
 
-    Centered lines share a common midpoint while their left edges wander;
-    left-aligned (and justified) lines share a common left edge. Only report
-    "center" on clear geometric evidence from at least two lines.
+    Centered lines share a common midpoint while both edges wander; right-aligned
+    lines share a common right edge while their left edges wander; left-aligned
+    (and justified) lines share a common left edge. Only report "center"/"right"
+    on clear geometric evidence from at least two lines — a single line carries
+    none, so it stays "left" (the safe default) and the translation is anchored
+    on the source's left edge.
     """
     if len(line_bboxes) < 2:
         return "left"
     lefts = [bbox[0] for bbox in line_bboxes]
+    rights = [bbox[2] for bbox in line_bboxes]
     centers = [(bbox[0] + bbox[2]) / 2.0 for bbox in line_bboxes]
     left_spread = max(lefts) - min(lefts)
+    right_spread = max(rights) - min(rights)
     center_spread = max(centers) - min(centers)
     if left_spread > 6.0 and center_spread <= max(3.0, left_spread * 0.25):
         return "center"
+    # Right-aligned: right edges lock together while the left edge stays ragged
+    # across *every* line. Justified paragraphs and hanging-indent bullets also
+    # line their right edges up, but their left edges are clustered on a common
+    # indent — only the marker/first line sits further left as the lone outlier.
+    # Dropping that single most-extreme (smallest) left therefore collapses their
+    # spread to ~0, whereas genuinely right-aligned lines keep a wide spread.
+    # Require ≥3 lines (2 lines cannot tell the two apart) and exclude bullets.
+    if (
+        len(lefts) >= 3
+        and right_spread <= 2.5
+        and left_spread > 6.0
+        and center_spread > right_spread
+        and not _starts_with_bullet(text)
+    ):
+        inner = sorted(lefts)[1:]
+        if (max(inner) - min(inner)) > 4.0:
+            return "right"
     return "left"
 
 
@@ -612,7 +637,7 @@ def _group_page_lines(
             page_width=page_width,
             block_width=current.bbox[2] - current.bbox[0],
         )
-        alignment = _detect_line_alignment(current_line_bboxes)
+        alignment = _detect_line_alignment(current_line_bboxes, current.text)
         # Figure/table captions are conventionally centered under their figure;
         # a single line carries no geometric evidence either way, so preserve
         # the visual midpoint instead of anchoring the translation left.

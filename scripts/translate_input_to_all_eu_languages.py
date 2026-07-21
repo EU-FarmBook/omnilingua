@@ -59,6 +59,12 @@ class JobResult:
     started_at: str | None = None
     finished_at: str | None = None
     duration_seconds: float | None = None
+    # Machine-readable translation stats (from cli.py --stats-json) plus derived
+    # quality flags, so the manifest carries a QA signal per job instead of only
+    # pass/fail. quality_flags is non-empty when the output still has untranslated
+    # remnants, unplaced blocks, or rejected image/text segments.
+    stats: dict | None = None
+    quality_flags: list[str] | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,6 +125,17 @@ def parse_args() -> argparse.Namespace:
         help="Re-run jobs even if the expected output file already exists.",
     )
     parser.add_argument(
+        "--translate-image-text",
+        action="store_true",
+        default=os.getenv("TRANSLATE_IMAGE_TEXT") in {"1", "true", "True", "yes"},
+        help=(
+            "Also translate text embedded inside figures/diagrams/images via the "
+            "vision model (direct engine only). Off by default; enable for the "
+            "evaluation matrix so captions, chart legends and image-based tables "
+            "are translated too. Defaults to the TRANSLATE_IMAGE_TEXT env var."
+        ),
+    )
+    parser.add_argument(
         "--no-copy-source-language",
         action="store_true",
         help=(
@@ -160,6 +177,33 @@ def discover_inputs(input_dir: Path) -> list[Path]:
 
 def run_command(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=str(cwd), text=True, capture_output=True)
+
+
+# Stat keys whose non-zero value means the output still carries defects. Kept as
+# (key, label) so the manifest records *what* went wrong, not just that it did.
+_QUALITY_STAT_KEYS = (
+    ("blocks_residual_source", "residual_source_text"),
+    ("blocks_unplaced", "unplaced_blocks"),
+    ("blocks_rejected", "rejected_blocks"),
+    ("segments_rejected", "rejected_segments"),
+    ("image_blocks_rejected", "rejected_image_blocks"),
+)
+
+
+def read_stats(stats_path: Path) -> tuple[dict | None, list[str]]:
+    """Load a cli.py stats sidecar and derive quality flags from it."""
+    if not stats_path.exists():
+        return (None, [])
+    try:
+        stats = json.loads(stats_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return (None, [])
+    flags = [
+        label
+        for key, label in _QUALITY_STAT_KEYS
+        if isinstance(stats.get(key), int) and stats.get(key, 0) > 0
+    ]
+    return (stats, flags)
 
 
 def utc_now() -> str:
@@ -255,6 +299,7 @@ def main() -> int:
             log_prefix = f"{input_path.stem}_{target_lang}"
             stdout_path = logs_root / f"{log_prefix}.stdout.txt"
             stderr_path = logs_root / f"{log_prefix}.stderr.txt"
+            stats_path = logs_root / f"{log_prefix}.stats.json"
 
             job_started_at = utc_now()
             job_started = time.monotonic()
@@ -326,11 +371,15 @@ def main() -> int:
                 target_lang,
                 "--pdf-out",
                 str(lang_dir) + "/",
+                "--stats-json",
+                str(stats_path),
             ]
             if source_lang:
                 cmd.extend(["--source-lang", source_lang])
             if args.engine:
                 cmd.extend(["--engine", args.engine])
+            if args.translate_image_text and input_path.suffix.lower() == ".pdf":
+                cmd.append("--translate-image-text")
 
             proc = run_command(cmd, cwd=ROOT)
             duration = elapsed_seconds(job_started)
@@ -338,10 +387,19 @@ def main() -> int:
             stdout_path.write_text(proc.stdout, encoding="utf-8")
             stderr_path.write_text(proc.stderr, encoding="utf-8")
 
+            job_stats: dict | None = None
+            quality_flags: list[str] = []
             if proc.returncode == 0 and output_path.exists():
                 status = "translated"
                 reason = None
-                print(f"  finished {finished_at} in {format_duration(duration)}")
+                job_stats, quality_flags = read_stats(stats_path)
+                if quality_flags:
+                    print(
+                        f"  finished {finished_at} in {format_duration(duration)} "
+                        f"⚠️  quality: {', '.join(quality_flags)}"
+                    )
+                else:
+                    print(f"  finished {finished_at} in {format_duration(duration)}")
             elif (
                 "Source and target language are the same" in proc.stderr
                 and not args.no_copy_source_language
@@ -376,6 +434,8 @@ def main() -> int:
                     started_at=job_started_at,
                     finished_at=finished_at,
                     duration_seconds=duration,
+                    stats=job_stats,
+                    quality_flags=quality_flags or None,
                 )
             )
             write_manifest(output_dir, results)
@@ -385,6 +445,7 @@ def main() -> int:
     copied = sum(1 for result in results if result.status == "copied_source_language")
     skipped = sum(1 for result in results if result.status.startswith("skipped"))
     failed = sum(1 for result in results if result.status == "failed")
+    flagged = sum(1 for result in results if result.quality_flags)
     print("")
     print("Summary")
     print(f"  translated: {translated}")
@@ -393,6 +454,7 @@ def main() -> int:
     run_finished_at = utc_now()
     run_duration = elapsed_seconds(run_started)
     print(f"  failed:     {failed}")
+    print(f"  flagged:    {flagged} (translated but with quality warnings — see manifest quality_flags)")
     print(f"  started:    {run_started_at}")
     print(f"  finished:   {run_finished_at}")
     print(f"  duration:   {format_duration(run_duration)}")

@@ -79,12 +79,39 @@ def _translate_block_text(
     return (candidate, api_calls)
 
 
+def _measure_overlay_spare(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    text: str,
+    *,
+    font_name: str,
+    font_file: Optional[str],
+    font_size: float,
+) -> float:
+    """Return insert_textbox's spare for ``text`` at ``font_size`` without drawing."""
+    scratch = fitz.open()
+    try:
+        scratch_page = scratch.new_page(width=page.rect.width, height=page.rect.height)
+        if font_file:
+            scratch_page.insert_font(fontname=font_name, fontfile=font_file)
+        return scratch_page.insert_textbox(
+            rect,
+            text,
+            fontname=font_name,
+            fontfile=font_file,
+            fontsize=font_size,
+            align=fitz.TEXT_ALIGN_LEFT,
+            lineheight=1.08,
+            overlay=True,
+        )
+    finally:
+        scratch.close()
+
+
 def _overlay_text_on_rect(page: fitz.Page, rect: fitz.Rect, translated_text: str) -> bool:
     target_rect = fitz.Rect(rect.x0 - 1.5, rect.y0 - 1.5, rect.x1 + 1.5, rect.y1 + 1.5)
     if target_rect.width < 12 or target_rect.height < 8:
         target_rect = fitz.Rect(target_rect.x0, target_rect.y0, target_rect.x0 + max(24, target_rect.width), target_rect.y0 + max(12, target_rect.height))
-
-    page.draw_rect(target_rect, color=None, fill=(1, 1, 1), overlay=True)
 
     style = TextStyleHint(
         font_name="Arial",
@@ -92,25 +119,48 @@ def _overlay_text_on_rect(page: fitz.Page, rect: fitz.Rect, translated_text: str
         color_rgb=(0.05, 0.05, 0.05),
     )
     font_name, font_file, render_text = resolve_font_for_text(page, style, translated_text)
-    font_size = style.font_size
 
-    for _ in range(6):
-        spare = page.insert_textbox(
+    # Find a size that genuinely fits BEFORE painting anything. insert_textbox
+    # renders *nothing* when the text overflows even slightly (so the old
+    # ``spare >= -0.5`` accepted sizes that drew no glyphs), and the white cover
+    # rectangle used to be painted first — together that stamped a blank white
+    # box over the original figure text whenever the translation would not fit
+    # ("white boxes on the title", unreadable legends). Measure on a scratch page
+    # and only cover + draw when a real fit exists; otherwise leave the original
+    # image text in place (untranslated is better than a blank box).
+    font_size = style.font_size
+    minimum_size = 6.0
+    placed_size: float | None = None
+    while font_size >= minimum_size - 0.01:
+        spare = _measure_overlay_spare(
+            page,
             target_rect,
             render_text,
-            fontname=font_name,
-            fontfile=font_file,
-            fontsize=font_size,
-            color=style.color_rgb,
-            align=fitz.TEXT_ALIGN_LEFT,
-            lineheight=1.08,
-            overlay=True,
+            font_name=font_name,
+            font_file=font_file,
+            font_size=font_size,
         )
-        if spare >= -0.5:
-            return True
+        if spare >= 0.0:
+            placed_size = font_size
+            break
         font_size *= 0.92
 
-    return False
+    if placed_size is None:
+        return False
+
+    page.draw_rect(target_rect, color=None, fill=(1, 1, 1), overlay=True)
+    page.insert_textbox(
+        target_rect,
+        render_text,
+        fontname=font_name,
+        fontfile=font_file,
+        fontsize=placed_size,
+        color=style.color_rgb,
+        align=fitz.TEXT_ALIGN_LEFT,
+        lineheight=1.08,
+        overlay=True,
+    )
+    return True
 
 
 def translate_pdf_image_text(
