@@ -232,5 +232,11 @@ test-results/
 playwright-report/
 playwright/.auth/
 
+# =============================================================================
+# Office lock files (LibreOffice / OpenOffice)
+# =============================================================================
+
+.~lock.*#
+
 
 ARCHITECTURE.md
