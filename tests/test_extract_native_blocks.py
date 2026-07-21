@@ -7,6 +7,7 @@ from app.pipeline.extract_native_blocks import (
     _block_logical_lines,
     _can_merge_lines,
     _classify_scholarly_kind,
+    _colors_incompatible,
     _detect_line_alignment,
     _detect_multicolumn_page,
     _mark_reference_section,
@@ -242,6 +243,44 @@ class ExtractNativeBlocksTests(unittest.TestCase):
         ]
         self.assertEqual(_detect_line_alignment(left_aligned), "left")
         self.assertEqual(_detect_line_alignment([(40.0, 100.0, 220.0, 112.0)]), "left")
+
+    def test_colors_incompatible_threshold(self) -> None:
+        black = (0.0, 0.0, 0.0)
+        near_black = (0.02, 0.02, 0.02)
+        blue = (38 / 255, 112 / 255, 184 / 255)
+        green = (90 / 255, 142 / 255, 74 / 255)
+        # Tiny anti-alias/rounding differences must still merge.
+        self.assertFalse(_colors_incompatible(black, near_black))
+        # Distinct editorial colours must not.
+        self.assertTrue(_colors_incompatible(blue, green))
+        self.assertTrue(_colors_incompatible(black, blue))
+
+    def test_does_not_merge_lines_across_a_colour_change(self) -> None:
+        # Same raw block, font, size and tight leading — mergeable in every way
+        # except colour. The colour change alone must keep them separate so each
+        # tag keeps its own colour on write-back (ResAlliance top-right tags).
+        def tag(x0: float, y0: float, x1: float, colour: tuple[float, float, float]) -> ExtractedTextBlock:
+            return ExtractedTextBlock(
+                block_id=1,
+                page_index=0,
+                bbox=(x0, y0, x1, y0 + 8.0),
+                text="Tag text",
+                source="native",
+                kind="line",
+                confidence=1.0,
+                style=TextStyleHint(font_name="Roboto", font_size=8.0, color_rgb=colour),
+                raw_block_id=7,
+            )
+
+        blue = tag(243.0, 35.0, 363.0, (38 / 255, 112 / 255, 184 / 255))
+        gold_below = tag(243.0, 47.0, 548.0, (190 / 255, 160 / 255, 15 / 255))
+        black_below = tag(243.0, 47.0, 548.0, (0.0, 0.0, 0.0))
+        blue_below = tag(243.0, 47.0, 548.0, (38 / 255, 112 / 255, 184 / 255))
+
+        self.assertFalse(_can_merge_lines(blue, gold_below, multi_column=False))
+        self.assertFalse(_can_merge_lines(blue, black_below, multi_column=False))
+        # Identical colour on the same terms still merges (no regression).
+        self.assertTrue(_can_merge_lines(blue, blue_below, multi_column=False))
 
     def test_detects_right_aligned_lines(self) -> None:
         # Common right edge, ragged left edges across every line: a right-aligned

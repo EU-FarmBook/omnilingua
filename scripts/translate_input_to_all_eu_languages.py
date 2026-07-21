@@ -15,6 +15,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# Load .env in the runner too, so the resolved-engine banner matches what each
+# cli.py subprocess actually uses (the subprocess loads .env on import, so
+# without this the runner reported "llm" while jobs ran with TRANSLATION_ENGINE).
+from dotenv import load_dotenv
+
+load_dotenv(ROOT / ".env")
+
 from app.core.engines import validate_engine
 
 SUPPORTED_EXTENSIONS = frozenset({".pdf", ".txt", ".doc", ".docx", ".ppt", ".pptx"})

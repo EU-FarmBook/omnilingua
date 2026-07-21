@@ -57,6 +57,26 @@ def _style_span_for_line(spans: list[dict]) -> dict:
     )
 
 
+# Two text runs whose colour differs by more than this (max per-channel delta in
+# 0..1) are treated as visually distinct and must NOT be merged into one block:
+# each keeps its own colour on write-back. Tuned to separate real editorial
+# colours (blue/green/gold category tags, coloured headings) while tolerating
+# near-black anti-alias/rounding differences in ordinary body text.
+_COLOR_MERGE_MAX_CHANNEL_DELTA = 0.20
+
+
+def _colors_incompatible(
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+) -> bool:
+    return max(abs(a[0] - b[0]), abs(a[1] - b[1]), abs(a[2] - b[2])) > _COLOR_MERGE_MAX_CHANNEL_DELTA
+
+
+def _fragment_style_color(fragment: dict) -> tuple[float, float, float]:
+    span = _style_span_for_line(fragment["spans"])
+    return _int_color_to_rgb(int(span.get("color", 0) or 0))
+
+
 def _merge_bbox(
     left: tuple[float, float, float, float],
     right: tuple[float, float, float, float],
@@ -149,6 +169,12 @@ def _stitch_row(fragments: List[dict]) -> List[dict]:
             return fragments
         if abs(left_size - right_size) > 0.25 * max(left_size, right_size):
             return fragments
+        # Distinctly coloured neighbours are separate editorial items (e.g. the
+        # blue/green/gold category tags on the ResAlliance poster), not one
+        # justified line — stitching them would collapse them to a single colour
+        # and reflow the translation across the fixed decorative markers.
+        if _colors_incompatible(_fragment_style_color(left), _fragment_style_color(right)):
+            return fragments
 
     bbox = ordered[0]["bbox"]
     spans: List[dict] = []
@@ -215,6 +241,11 @@ def _can_merge_lines(
     if previous.style.font_name != current.style.font_name:
         return False
     if previous.raw_block_id != current.raw_block_id:
+        return False
+    # A colour change marks a new editorial element (coloured heading, tag, or
+    # highlighted term); merging across it would repaint the whole block in one
+    # colour and drop the distinction the author made.
+    if _colors_incompatible(previous.style.color_rgb, current.style.color_rgb):
         return False
 
     font_delta = abs(previous.style.font_size - current.style.font_size)
