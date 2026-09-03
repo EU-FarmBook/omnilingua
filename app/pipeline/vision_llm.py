@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+from app.core.model_config import reasoning_kwargs
 from openai import APIConnectionError, APIError, OpenAI
 
 from app.core.model_config import get_vision_model_config
@@ -58,6 +59,7 @@ class VisionLLMClient:
 
         try:
             response = self.client.chat.completions.create(
+                **reasoning_kwargs(),
                 model=self.model,
                 messages=[
                     {

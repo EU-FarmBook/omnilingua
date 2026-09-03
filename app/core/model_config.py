@@ -22,6 +22,22 @@ def normalize_openai_base_url(url: str) -> str:
     return normalized
 
 
+def reasoning_kwargs() -> dict:
+    """`reasoning_effort` for every chat completion, when configured.
+
+    Scaleway's Generative APIs serve reasoning models: qwen3.5-397b-a17b fills
+    `reasoning` before `content`. If that exhausts max_tokens the response ends
+    with finish_reason=length and `content` is None — and several call sites
+    here do `response.choices[0].message.content.strip()`, which raises
+    AttributeError rather than degrading.
+
+    "none" skips the reasoning phase. Sent through `extra_body` so it reaches
+    the server verbatim, and empty by default so other providers are unaffected.
+    """
+    effort = _env_first("LLM_REASONING_EFFORT", default="")
+    return {"extra_body": {"reasoning_effort": effort}} if effort else {}
+
+
 @dataclass(frozen=True)
 class ModelEndpointConfig:
     api_url: str

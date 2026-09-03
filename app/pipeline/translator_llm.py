@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from dotenv import load_dotenv
+from app.core.model_config import reasoning_kwargs
 from openai import OpenAI, APIConnectionError, APIError
 
 from app.core.model_config import get_text_model_config
@@ -221,6 +222,7 @@ Respond with ONLY the ISO 639-1 language code (e.g., "en", "es", "fr", "de")."""
 
         try:
             response = self.client.chat.completions.create(
+                **reasoning_kwargs(),
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "You are a language detection expert. Respond only with the ISO 639-1 code."},
@@ -291,6 +293,7 @@ Each item is a separate text snippet. Translate each independently:
 
         try:
             response = self.client.chat.completions.create(
+                **reasoning_kwargs(),
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -352,6 +355,7 @@ Each item is a separate text snippet. Translate each independently:
 
         try:
             response = self.client.chat.completions.create(
+                **reasoning_kwargs(),
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -404,6 +408,7 @@ Each item is a separate text snippet. Translate each independently:
         )
         try:
             response = self.client.chat.completions.create(
+                **reasoning_kwargs(),
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
